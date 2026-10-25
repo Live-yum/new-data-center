@@ -15,6 +15,3 @@ target/
 .vscode/
 *.log
 .DS_Store
-
-# Database seed files containing embedded service credentials
-*.sql

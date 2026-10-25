@@ -15,7 +15,7 @@
 
 ## 本次修复
 
-1. PostgreSQL 和 `kingbase8` JDBC 驱动改为 MyBatis starter 的传递依赖，最终服务包实际包含两种驱动；MySQL 驱动保留为可选依赖。
+1. PostgreSQL 和 `kingbase8` JDBC 驱动改为 MyBatis starter 的传递依赖，同时保留 MySQL 驱动的传递依赖。聚合服务 `yudao-server` 与独立 `system`、`infra` 服务都能获得这些驱动，已有 MySQL 部署和代码生成器连接 MySQL 外部数据源无需另加驱动；默认业务数据库仍为 PostgreSQL。
 2. 添加 `application-postgresql.yaml`、`application-kingbase.yaml`，分别导入共享 `yudao-database-*.yaml`。数据库地址、用户名、密码、schema 和完整 JDBC URL 均可通过环境变量配置，配置文件不包含实际密码。
 3. 使用 `INPUT` 主键策略，沿用 DO 上的 `@KeySequence` 和已有 PostgreSQL / Kingbase key generator。分页插件根据 JDBC 方言生成分页 SQL。
 4. 业务 SQL 混用了 `BOOL` 和 `int2` 布尔列，添加 `NumericBooleanTypeHandler`，仅在两套数据库 profile 中通过 `yudao.mybatis.numeric-boolean=true` 注册。显式 `jdbcType` 优先，否则读取 PreparedStatement 参数元数据：整数列绑定 `0/1`，原生布尔列继续绑定 Boolean，保留 SQL NULL。这也覆盖 MyBatis Wrapper 的布尔查询参数，不依赖 Wrapper 是否保留 `@TableField` 注解。Quartz 使用自己的 JDBC delegate。
@@ -116,6 +116,26 @@ spring:
 PostgreSQL 对应 `classpath:yudao-database-postgresql.yaml`。共享文件位于 MyBatis starter 内，无需在每个业务模块复制数据源细节。若使用不同业务数据库，分别设置各服务的 `DB_*` 环境变量。
 
 ## 验证与回归
+
+### 服务运行时的 JDBC 驱动
+
+JDBC 驱动必须进入实际服务的运行时依赖；仅在直接声明驱动的 MyBatis starter 内通过测试，无法证明 `optional` 依赖能传递给最终服务。`yudao-server` 中的 `JdbcDriverAvailabilityTest` 使用其自身的依赖，通过 `DriverManager.getDriver(...)` 实际发现 MySQL、PostgreSQL、Kingbase 驱动并检查对应 URL，不手工加载驱动类，也不添加额外的测试驱动依赖。该测试不连接数据库：
+
+```bash
+mvn -pl yudao-server -am -Dtest=JdbcDriverAvailabilityTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+可同时检查聚合服务和两个独立服务的 MySQL 运行时依赖路径：
+
+```bash
+mvn -pl yudao-server,yudao-module-system/yudao-module-system-server,yudao-module-infra/yudao-module-infra-server \
+  -am dependency:tree -Dscope=runtime -Dincludes=com.mysql:mysql-connector-j
+```
+
+三项服务应通过 `yudao-spring-boot-starter-mybatis` 解析到 `com.mysql:mysql-connector-j`，不能只在 starter 自身看到 `(optional)`。这是驱动可用性验证，不代表已完成 MySQL 服务端连接或数据迁移验证。
+
+### PostgreSQL / Kingbase 数据库行为
 
 本次在真实 PostgreSQL 16.9 临时实例上导入了 PostgreSQL 的业务和 Quartz SQL：成功建立 **60 张表、48 个业务序列**。当前启用模块的所有 `@TableName` 和 `@KeySequence` 都能在初始化脚本中找到对应对象。
 

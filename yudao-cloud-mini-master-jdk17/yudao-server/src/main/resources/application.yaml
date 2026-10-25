@@ -109,6 +109,7 @@ yudao:
       url: ${ADMIN_UI_URL:http://localhost:5173}
   security:
     mock-enable: false
+    trust-login-user-header: false # 聚合服务直接验证 token，不信任外部 login-user 身份头
   captcha:
     enable: ${CAPTCHA_ENABLED:true}
   api-encrypt:

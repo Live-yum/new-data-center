@@ -39,7 +39,10 @@ public interface ApiAccessLogMapper extends BaseMapperX<ApiAccessLogDO> {
      * @param limit      删除条数，防止一次删除太多
      * @return 删除条数
      */
-    @Delete("DELETE FROM infra_api_access_log WHERE create_time < #{createTime} LIMIT #{limit}")
+    // 使用有界子查询同时兼容 PostgreSQL、KingbaseES 和 MySQL，保留物理删除语义。
+    @Delete("DELETE FROM infra_api_access_log WHERE id IN (SELECT id FROM ("
+            + "SELECT id FROM infra_api_access_log WHERE create_time < #{createTime} ORDER BY id LIMIT #{limit}"
+            + ") expired_records)")
     Integer deleteByCreateTimeLt(@Param("createTime") LocalDateTime createTime, @Param("limit") Integer limit);
 
 }

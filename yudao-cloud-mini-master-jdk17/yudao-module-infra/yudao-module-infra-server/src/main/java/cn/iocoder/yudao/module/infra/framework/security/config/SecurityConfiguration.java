@@ -2,6 +2,7 @@ package cn.iocoder.yudao.module.infra.framework.security.config;
 
 import cn.iocoder.yudao.framework.security.config.AuthorizeRequestsCustomizer;
 import cn.iocoder.yudao.module.infra.enums.ApiConstants;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -14,7 +15,7 @@ import org.springframework.security.config.annotation.web.configurers.AuthorizeH
 public class SecurityConfiguration {
 
     @Bean("infraAuthorizeRequestsCustomizer")
-    public AuthorizeRequestsCustomizer authorizeRequestsCustomizer() {
+    public AuthorizeRequestsCustomizer authorizeRequestsCustomizer(@Value("${yudao.rpc.enabled:true}") boolean rpcEnabled) {
         return new AuthorizeRequestsCustomizer() {
 
             @Override
@@ -33,8 +34,12 @@ public class SecurityConfiguration {
                 registry.requestMatchers(buildAdminApi("/infra/file/*/get/**")).permitAll();
 
                 // TODO 芋艿：这个每个项目都需要重复配置，得捉摸有没通用的方案
-                // RPC 服务的安全配置
-                registry.requestMatchers(ApiConstants.PREFIX + "/**").permitAll();
+                // 聚合启动直接调用本地 API，禁止通过 HTTP 绕过管理端权限调用内部 RPC。
+                if (rpcEnabled) {
+                    registry.requestMatchers(ApiConstants.PREFIX + "/**").permitAll();
+                } else {
+                    registry.requestMatchers(ApiConstants.PREFIX + "/**").denyAll();
+                }
             }
 
         };

@@ -13,6 +13,11 @@ export default defineConfig(async () => {
       ],
       server: {
         proxy: {
+          '/infra/ws': {
+            changeOrigin: true,
+            target: 'http://localhost:48080',
+            ws: true,
+          },
           '/admin-api': {
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/admin-api/, ''),

@@ -1,0 +1,195 @@
+.data-center-app {
+  box-sizing: border-box;
+  min-height: 520px;
+  padding: 28px;
+  color: #19324d;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  background: #f5f8fc;
+  border-radius: 12px;
+}
+.data-center-app * {
+  box-sizing: border-box;
+}
+.data-center-app h1,
+.data-center-app p {
+  margin: 0;
+}
+.data-center-app h1 {
+  font-size: 26px;
+  font-weight: 650;
+}
+.data-center-app .dc-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.data-center-app .dc-eyebrow {
+  margin-bottom: 7px;
+  color: #3572c5;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+.data-center-app .dc-description {
+  margin-top: 7px;
+  color: #63778e;
+}
+.data-center-app .dc-session {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  color: #63778e;
+  font-size: 12px;
+}
+.data-center-app .dc-status {
+  padding: 3px 10px;
+  color: #805b19;
+  background: #fff1d4;
+  border-radius: 12px;
+}
+.data-center-app .dc-status.is-connected {
+  color: #11664e;
+  background: #dcf4eb;
+}
+.data-center-app .dc-nav {
+  display: flex;
+  gap: 6px;
+  margin: 26px 0 20px;
+  padding: 5px;
+  width: fit-content;
+  background: #e8eef7;
+  border-radius: 9px;
+}
+.data-center-app .dc-nav a {
+  padding: 7px 16px;
+  color: #536a85;
+  text-decoration: none;
+  border-radius: 6px;
+}
+.data-center-app .dc-nav .router-link-active {
+  color: #245ba8;
+  background: #fff;
+  box-shadow: 0 1px 3px #21385712;
+}
+.data-center-app .dc-notice,
+.data-center-app .dc-error {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #e9f1fc;
+}
+.data-center-app .dc-error {
+  color: #a33232;
+  background: #ffecec;
+}
+.data-center-app .dc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  color: #63778e;
+  font-size: 12px;
+}
+.data-center-app button {
+  padding: 7px 14px;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  background: #2e6bba;
+  border: 0;
+  border-radius: 6px;
+}
+.data-center-app button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.data-center-app .dc-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.data-center-app .dc-metrics article {
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #e3eaf4;
+  border-radius: 10px;
+}
+.data-center-app .dc-metrics p {
+  font-weight: 600;
+}
+.data-center-app .dc-metrics strong {
+  display: block;
+  margin: 12px 0;
+  font-size: 40px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+.data-center-app .dc-metrics span {
+  color: #77889d;
+  font-size: 12px;
+}
+.data-center-app .dc-panel {
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e3eaf4;
+  border-radius: 10px;
+}
+.data-center-app .dc-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  color: #536a85;
+}
+.data-center-app input {
+  width: 260px;
+  max-width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  border: 1px solid #ccd8e8;
+  border-radius: 6px;
+}
+.data-center-app .dc-table-wrap {
+  max-height: 500px;
+  overflow: auto;
+}
+.data-center-app table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.data-center-app th,
+.data-center-app td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #edf1f7;
+}
+.data-center-app th {
+  position: sticky;
+  top: 0;
+  color: #536a85;
+  font-size: 12px;
+  background: #f5f8fc;
+}
+.data-center-app .dc-empty {
+  padding: 36px 0;
+  color: #77889d;
+  text-align: center;
+}
+@media (max-width: 640px) {
+  .data-center-app {
+    padding: 18px;
+  }
+  .data-center-app .dc-metrics {
+    grid-template-columns: 1fr;
+  }
+  .data-center-app .dc-session {
+    align-items: flex-start;
+  }
+}

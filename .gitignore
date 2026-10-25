@@ -3,6 +3,10 @@
 .env.*
 **/application*.yaml
 **/application*.yml
+# Versioned, credential-free startup templates. Local overrides stay ignored.
+!yudao-cloud-mini-master-jdk17/yudao-server/src/main/resources/application.yaml
+!yudao-cloud-mini-master-jdk17/yudao-server/src/main/resources/application-postgresql.yaml
+!yudao-cloud-mini-master-jdk17/yudao-server/src/main/resources/application-kingbase.yaml
 *.pem
 *.key
 *.p12

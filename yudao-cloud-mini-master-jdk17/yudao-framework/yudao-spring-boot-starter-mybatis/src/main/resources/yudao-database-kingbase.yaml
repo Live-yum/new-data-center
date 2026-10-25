@@ -1,0 +1,46 @@
+# 目标：KingbaseES 的 PostgreSQL 兼容模式。使用厂商 JDBC 协议，不冒充 PostgreSQL 驱动。
+spring:
+  datasource:
+    dynamic:
+      primary: master
+      strict: true
+      datasource:
+        master:
+          type: com.alibaba.druid.pool.DruidDataSource
+          driver-class-name: com.kingbase8.Driver
+          url: ${DB_JDBC_URL:jdbc:kingbase8://${DB_HOST:127.0.0.1}:${DB_PORT:54321}/${DB_NAME:ruoyi-vue-pro}?currentSchema=${DB_SCHEMA:public}}
+          username: ${DB_USERNAME:yudao}
+          password: ${DB_PASSWORD}
+      druid:
+        initial-size: 1
+        min-idle: 1
+        max-active: 20
+        max-wait: 60000
+        validation-query: SELECT 1
+        test-while-idle: true
+        test-on-borrow: false
+        test-on-return: false
+  sql:
+    init:
+      mode: never
+  quartz:
+    jdbc:
+      initialize-schema: never
+    properties:
+      org.quartz.jobStore.driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
+
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: INPUT
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    jdbc-type-for-null: 'NULL'
+
+yudao:
+  mybatis:
+    numeric-boolean: true
+  codegen:
+    db-schemas:
+      - ${DB_SCHEMA:public}

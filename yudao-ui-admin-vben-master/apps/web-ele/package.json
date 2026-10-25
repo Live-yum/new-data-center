@@ -20,7 +20,8 @@
     "build:analyze": "pnpm vite build --mode analyze",
     "dev": "pnpm vite --mode development",
     "preview": "vite preview",
-    "typecheck": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vue-tsc --noEmit --skipLibCheck"
+    "typecheck": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vue-tsc --noEmit --skipLibCheck",
+    "typecheck:micro": "vue-tsc -p tsconfig.micro.json --noEmit --skipLibCheck"
   },
   "imports": {
     "#/*": "./src/*"
@@ -36,6 +37,7 @@
     "@vben/icons": "workspace:*",
     "@vben/layouts": "workspace:*",
     "@vben/locales": "workspace:*",
+    "@vben/micro-apps": "workspace:*",
     "@vben/plugins": "workspace:*",
     "@vben/preferences": "workspace:*",
     "@vben/request": "workspace:*",
@@ -60,6 +62,7 @@
     "highlight.js": "catalog:",
     "livekit-client": "catalog:",
     "pinia": "catalog:",
+    "qiankun": "catalog:",
     "sortablejs": "catalog:",
     "steady-xml": "catalog:",
     "tinymce": "catalog:",

@@ -187,6 +187,7 @@ catalog:
   postcss-html: ^1.8.1
   postcss-scss: ^4.0.9
   publint: ^0.3.22
+  qiankun: 2.10.16
   qrcode: ^1.5.4
   qs: ^6.15.3
   reka-ui: ^2.10.4

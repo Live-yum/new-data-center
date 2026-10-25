@@ -1,5 +1,6 @@
 /** 主应用只传递显示信息和受控接口，不向子应用分发访问/刷新令牌。 */
 export interface DataCenterContext {
+  dataSource?: 'demo' | 'platform';
   locale: string;
   sessionKey: string;
   tenantId: null | number;
@@ -25,13 +26,13 @@ export interface DataCenterBridge {
   getDictionaries: (signal: AbortSignal) => Promise<DataCenterDictData[]>;
 }
 
-export interface DataCenterProps {
+export type DataCenterProps = {
   bridge?: DataCenterBridge;
   container?: HTMLElement;
   context?: DataCenterContext;
   onNavigate?: (path: string) => void;
   route?: string;
-}
+};
 
 const dataCenterRoutes = new Set([
   '/overview',

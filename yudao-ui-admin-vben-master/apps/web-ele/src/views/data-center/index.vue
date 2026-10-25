@@ -93,6 +93,7 @@ function props(): DataCenterProps {
   }
   return {
     context: {
+      dataSource: 'platform',
       locale: preferences.app.locale,
       sessionKey: session,
       tenantId: accessStore.visitTenantId ?? accessStore.tenantId,
@@ -160,7 +161,7 @@ async function start() {
           props: props(),
         },
         {
-          sandbox: { strictStyleIsolation: true },
+          sandbox: { styleIsolation: true },
         },
       ),
     );
@@ -209,10 +210,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Page
-    title="数据中心"
-    description="统一查看当前租户的部门目录与数据字典。"
-  >
+  <Page title="数据中心" description="统一查看当前租户的部门目录与数据字典。">
     <ElAlert
       v-if="loading"
       title="正在加载数据中心…"

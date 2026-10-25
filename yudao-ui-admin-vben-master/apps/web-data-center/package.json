@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "node scripts/dev.mjs",
+    "dev": "vite --host 127.0.0.1 --port 5175 --strictPort",
     "preview": "vite preview --host 127.0.0.1 --port 5175 --strictPort",
     "typecheck": "vue-tsc --noEmit --skipLibCheck"
   },
@@ -16,6 +16,7 @@
     "vue-router": "catalog:"
   },
   "devDependencies": {
+    "@qiankunjs/bundler-plugin": "0.0.1-rc.2",
     "@vben/tsconfig": "workspace:*",
     "@vitejs/plugin-vue": "catalog:",
     "typescript": "catalog:",

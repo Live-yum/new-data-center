@@ -1,6 +1,6 @@
 # New Data Center
 
-基于仓库现有芋道 Java 17 后端和 Vue Vben 5 前端，增加 PostgreSQL / 人大金仓切换、qiankun 微前端，以及紫金桥实时数据库公共客户端。
+基于仓库现有芋道 Java 17 后端和 Vue Vben 5 前端，增加 PostgreSQL / 人大金仓切换、qiankun 3.x 微前端，以及紫金桥实时数据库公共客户端。
 
 默认组合为 **PostgreSQL + `yudao-server` 聚合后端 + `web-ele` 主应用 + `web-data-center` 子应用**。保留 system / infra 独立微服务代码和其他四套前端。详细设计、接口映射和验证方法见下方文档。
 
@@ -13,9 +13,11 @@
 | `yudao-cloud-mini-master-jdk17/yudao-framework/yudao-spring-boot-starter-realdb/` | 独立的紫金桥 REST API 公共模块 |
 | `yudao-ui-admin-vben-master/apps/web-ele/` | 原有 Element Plus 管理端，现在也是 qiankun 主应用 |
 | `yudao-ui-admin-vben-master/apps/web-data-center/` | 数据中心子应用：总览、部门目录和数据字典 |
+| `yudao-ui-admin-vben-master/apps/web-micro-demo/` | 无需后端的 qiankun 3 集成示例宿主，使用明确标注的演示数据 |
 | `yudao-ui-admin-vben-master/packages/micro-apps/` | 主子应用通信类型及挂载、更新、卸载调度 |
 | [docs/database.md](docs/database.md) | 数据库配置、初始化、兼容性修复和迁移说明 |
 | [docs/micro-frontends.md](docs/micro-frontends.md) | 微前端开发、通信、部署和测试说明 |
+| [docs/micro-frontend-example.md](docs/micro-frontend-example.md) | 可运行的主子应用集成例子、操作步骤和代码说明 |
 | [docs/realdb-api.md](docs/realdb-api.md) | 紫金桥配置、使用示例和全部 66 个操作映射 |
 
 ```mermaid
@@ -82,6 +84,8 @@ Compose 仅将 PostgreSQL 和 Redis 暴露到本机回环地址；数据库名�
 
 `yudao-server/src/main/resources/application.yaml` 是不含实际凭据的版本化基础配置。默认禁用 Nacos、XXL-JOB 和远程 Feign，通过 `yudao.rpc.enabled=false` 注入聚合进程内已有的 API 实现，并拒绝对内部 RPC 路由的 HTTP 访问，避免绕过管理接口权限。
 
+聚合模式还设置 `yudao.security.trust-login-user-header=false`，只通过正常 token 校验建立登录身份；外部传入的 `login-user` 身份头不会被信任。Nginx 示例在管理 API 和 WebSocket 两处代理中同时清除此头。独立微服务保留原可信网关透传模式，部署时应继续通过网关进入并限制服务直连。
+
 原社交服务启动时需要微信客户端 Bean，因此配置了明确的 `local-disabled` 占位应用标识；不会据此进行微信登录。需要启用公众号 / 小程序功能时，通过 `WX_MP_APP_ID`、`WX_MP_SECRET`、`WX_MINIAPP_APP_ID`、`WX_MINIAPP_SECRET` 提供真实配置。
 
 独立 system / infra 服务仍默认启用 Feign，需要各自的服务名、端口、Nacos 等外部配置。数据库配置可通过以下方式复用：
@@ -117,7 +121,37 @@ SQL 使用 `sql/kingbase/` 中的原有脚本。适配目标为 **PostgreSQL 兼
 
 数据库层还修复了数值布尔字段与原生 `BOOL` 混用时的绑定、序列主键识别和限量删除 SQL。分页、代码生成 schema、Quartz delegate 等沿用并补齐原框架能力，详见 [数据库说明](docs/database.md)。
 
-## 5. 启动 qiankun 微前端
+MySQL 驱动仍作为传递依赖打入可执行服务，支持原有 MySQL 部署，以及在 PostgreSQL / 金仓平台中配置 MySQL 外部数据源供代码生成使用；这不会改变默认数据库 profile。
+
+## 5. qiankun 3.x 微前端与集成示例
+
+当前精确锁定 `qiankun@3.0.0-rc.22` 和官方 `@qiankunjs/bundler-plugin@0.0.1-rc.2`。这是 3.x 预发布版本，依赖和 lockfile 均使用明确版本，升级时应重新验证生命周期和浏览器能力。子应用采用原生 ESM，样式隔离使用 `sandbox.styleIsolation` 和浏览器 CSS `@scope`。
+
+这套 ESM 接入要求 Chrome / Edge 133+ 或 Safari 18.4+；Firefox 当前默认不满足动态多 import map 要求。具体浏览器条件及开发时手动刷新的限制见 [qiankun 官方浏览器说明](https://www.qiankunjs.com/guide/browser-support) 和 [本项目微前端说明](docs/micro-frontends.md)。
+
+### 先运行无需后端的集成例子
+
+在前端工作区执行：
+
+```bash
+cd yudao-ui-admin-vben-master
+pnpm install --frozen-lockfile
+pnpm dev:micro-demo
+```
+
+打开 `http://127.0.0.1:5174/`。示例宿主加载同一个 `web-data-center` 子应用，使用显式的演示数据桥接函数；可操作挂载、卸载、重新挂载、路由同步和租户切换，观察生命周期事件与数据更新。此例子不要求 Java、PostgreSQL、Redis 或管理端登录。
+
+```bash
+# 构建示例宿主和真实子应用
+pnpm build:micro-demo
+
+# 用生产构建产物复验集成
+pnpm preview:micro-demo
+```
+
+完整例子及关键代码见 [微前端集成示例](docs/micro-frontend-example.md)。
+
+### 启动接入真实后端的管理端
 
 进入前端工作区：
 
@@ -126,7 +160,7 @@ cd yudao-ui-admin-vben-master
 pnpm install --frozen-lockfile
 cp config/web-ele.env.example apps/web-ele/.env.local
 
-# 终端一：构建监听 + 子应用静态服务，默认 5175
+# 终端一：原生 Vite 子应用服务，默认 5175
 pnpm dev:data-center
 
 # 终端二：原 Element Plus 主应用，示例端口 5173
@@ -138,10 +172,10 @@ pnpm dev:ele
 实现要点：
 
 - 主应用通过 qiankun `loadMicroApp` 加载子应用；保留原有登录、布局、权限菜单和请求拦截器。
-- 子应用导出 `bootstrap`、`mount`、`unmount`、`update`，使用真实 HTML + UMD 入口，避免 qiankun 2 与 Vite 原生 ESM 入口不兼容。
+- 子应用通过原生 ESM 导出 `bootstrap`、`mount`、`unmount`、`update`；官方 Vite 插件处理入口标记及开发、预览集成，开发和生产均使用模块入口。
 - 主应用向子应用传递受控查询函数、显示用会话信息和路由，不向子应用传递紫金桥密码或原始访问令牌。
 - 嵌入时使用内存路由，独立预览使用 hash 路由；宿主 URL 保存当前子视图，支持刷新恢复。
-- 启用样式隔离；页面离开、退出登录和切换租户时清理实例、监听和请求，避免旧会话响应回填。
+- 使用 qiankun 3 的 `sandbox: { styleIsolation: true }` 隔离子应用样式；页面离开、退出登录和切换租户时清理实例、监听和请求，避免旧会话响应回填。
 - 子应用可独立预览；真实业务数据由登录后的主应用注入，无宿主时明确显示独立预览状态。
 
 ### 构建与部署
@@ -238,6 +272,8 @@ pnpm check:micro
 pnpm build:micro
 ```
 
+独立示例提供真实浏览器回归：先运行 `pnpm dev:micro-demo` 或 `pnpm preview:micro-demo`，再于另一终端运行 `pnpm test:micro-demo`；首次使用先执行 `pnpm exec playwright install chromium`。开发和生产应各验证一次，详见 [集成示例测试说明](docs/micro-frontend-example.md#4-自动化回归)。
+
 数据库实际连接测试需要显式提供测试库地址，命令见 [数据库回归说明](docs/database.md)。实时库测试使用本机 HTTP 模拟服务，覆盖全部文档操作的实际 HTTP 方法、路径、参数和请求体，以及认证、并发、超时、非 JSON 错误、中文名称编码和禁用自动配置。
 
 ### 本次实际验证结果
@@ -246,13 +282,15 @@ pnpm build:micro
 | --- | --- |
 | PostgreSQL 16.9 初始化 | 业务与 Quartz 脚本导入成功：60 张表、48 个业务序列 |
 | 后端构建 | `yudao-server` 及依赖的 26 个 Maven 模块构建通过；可执行 JAR 已实际启动 |
-| 后端测试 | 显式连接测试数据库运行 97 项：数据库 10 项、紫金桥 84 项、内部 RPC 安全 3 项，全部通过 |
+| 后端测试 | 显式连接测试数据库运行 108 项：数据库与驱动 13 项、紫金桥 84 项、安全 11 项，全部通过且无跳过 |
 | 真实 HTTP 联调 | 使用本地初始化账户完成登录、权限、用户分页、通知未读数、部门、字典和代码生成元数据查询；部门 12 条、字典 1556 条 |
 | 内部 RPC 防护 | 聚合模式下匿名和已认证 HTTP 请求均不能调用 system / infra 内部 RPC |
-| 微前端 | 7 项生命周期、路由与会话隔离测试通过；子应用完整类型检查、宿主改动及其真实依赖的定向类型检查通过 |
-| 前端构建与浏览器 | 主、子应用生产构建通过；真实后端登录后完成 qiankun 挂载、样式隔离、真实数据、切页、返回、刷新、快速重复挂载及退出登录清理验证；最终一轮无页面脚本错误 |
+| 身份头 review 修复 | 真实过滤器 8 项回归通过；最终 JAR 的 HTTP 复验拒绝伪造身份头，合法 token 搭配伪造头时身份仍来自 token |
+| JDBC review 修复 | 消费者级 3 项驱动发现测试通过；聚合、system、infra 三个实际可执行 JAR 均包含 MySQL / PostgreSQL / Kingbase 驱动 |
+| 微前端 | 10 项生命周期、路由、会话及演示数据桥接测试通过；子应用与示例完整类型检查、宿主改动及其真实依赖的定向类型检查通过 |
+| 前端构建与浏览器 | 主、子和示例应用构建通过；独立示例开发 / 生产模式及入口 503 后重试均通过。真实 PostgreSQL 管理端完成 qiankun 3 原生 ESM、CSS `@scope`、真实数据、切页、返回、刷新、快速重挂及退出清理验证，均无页面脚本错误 |
 
-原管理端全量 `vue-tsc` 在当前执行环境因内存限制被终止，尚未完成所有原有业务页面的完整类型验收。原初始化菜单还有当前前端未包含的 CMS 页面，部分外部图片和图标也依赖外网；这些原有资源限制及本次测试范围详见 [微前端验证记录](docs/micro-frontends.md#本次验证记录)。
+原管理端全量 `vue-tsc` 在上一轮因执行环境内存限制被终止，尚未完成所有原有业务页面的完整类型验收。原初始化菜单还有当前前端未包含的 CMS 页面，部分外部图片和图标也依赖外网；这些原有资源限制及本次测试范围详见 [微前端验证记录](docs/micro-frontends.md#本次验证)。
 
 实机边界：PostgreSQL 已完成上述本地初始化与集成验证；人大金仓和紫金桥还需在现场指定版本、账户权限和网络环境下验收。测试替身通过不等于厂商实机联调通过。
 
@@ -265,6 +303,8 @@ pnpm build:micro
 | 聚合启动基础配置 | 补齐原仓库未提交的启动配置，以本地 API 实现代替聚合进程中的 Feign 调用 |
 | 业务模块双产物打包 | 修复嵌套可执行 JAR 导致业务类不可见，同时保留独立微服务运行方式 |
 | qiankun 主子应用 | 在原管理端基础上提供可独立构建和部署的真实子应用 |
+| qiankun 3 集成例子 | 原生 ESM 与官方 Vite 插件；提供不依赖后端的独立宿主和演示操作 |
+| PR review 修复 | 恢复 MySQL 驱动传递依赖，并关闭聚合模式对外部身份头的信任 |
 | realdb 公共 starter | 封装全部 66 个文档操作，统一认证、超时、协议校验和异常处理 |
 | 文档与回归测试 | 补齐根 README、三个专题文档以及数据库 / 微前端 / HTTP 契约测试 |
 

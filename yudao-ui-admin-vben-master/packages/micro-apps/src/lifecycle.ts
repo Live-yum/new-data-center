@@ -1,4 +1,6 @@
 interface MicroAppHandle<Props> {
+  bootstrapPromise?: Promise<unknown>;
+  loadPromise?: Promise<unknown>;
   mountPromise: Promise<unknown>;
   unmount: () => Promise<unknown>;
   update?: (props: Props) => Promise<unknown>;
@@ -24,7 +26,13 @@ export function createMicroAppController<Props>(
       enqueue(async () => {
         if (disposed || app) return;
         app = load();
-        await app.mountPromise;
+        // qiankun 3/single-spa 分别暴露加载、初始化和挂载 Promise。
+        // 入口失败时三者都会拒绝；只等待 mountPromise 会遗留未处理拒绝。
+        await Promise.all([
+          app.loadPromise,
+          app.bootstrapPromise,
+          app.mountPromise,
+        ]);
       }),
     update: (props: Props) =>
       enqueue(async () => {

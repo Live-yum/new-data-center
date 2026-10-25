@@ -1,128 +1,125 @@
-# qiankun 微前端
+# qiankun 3 微前端
 
-## 改造范围
+## 版本与改造范围
 
-默认使用已有的 `apps/web-ele`（Vue 3、Element Plus、Vben）作为主应用，保留登录、菜单、权限、标签页及全部原业务页面。增加 `apps/web-data-center` 独立 Vue 子应用，主应用通过 qiankun `loadMicroApp` 加载其 HTML 入口。
+本次按要求使用 **qiankun `3.0.0-rc.22`** 和官方 **`@qiankunjs/bundler-plugin` `0.0.1-rc.2`**，均精确锁定并提交 `pnpm-lock.yaml`。截至本次迁移，npm 的 `latest` 仍是 qiankun 2，3.x 是 `rc` 预发布版本；安装本仓库应使用锁文件，不执行 `pnpm add qiankun@latest`。新官网的 `next` 文档可能比已发布包更新，代码以 rc.22 的实际导出和类型为准，未使用尚未进入该包的 `loadTimeout`、`unload()` 等接口。
 
-子应用已经实现可用的部门/字典工作台：从现有后端 `/system/dept/simple-list`、`/system/dict-data/simple-list` 查询真实数据，展示数量、搜索部门和字典。它是后续数据中心业务拆分的起点，不是紫金桥实时库可视化界面。紫金桥凭据和调用逻辑留在后端公共模块，浏览器不直接连接实时库。
+已有 `apps/web-ele`（Vue 3、Element Plus、Vben）作为生产主应用，保留原登录、菜单、权限、标签页和业务页面。它通过 `loadMicroApp` 加载 `apps/web-data-center` 的原生 ESM HTML 入口。其他四套管理端仍可独立使用，本次微前端接入集中在默认 `web-ele`。
 
-其他四套管理端 `web-antd`、`web-antdv-next`、`web-naive`、`web-tdesign` 仍可独立使用；本次将默认 `web-ele` 接入 qiankun，未将同一套管理功能重复拆成四个子应用。
+数据中心子应用查询现有后端的 `/system/dept/simple-list`、`/system/dict-data/simple-list`，提供数量概览、部门目录和字典搜索。它是后续业务拆分的起点；紫金桥客户端、凭据和接口调用留在后端公共模块，浏览器没有直接连接实时数据库。
+
+新增的 `apps/web-micro-demo` 是一个独立演示宿主：复用完全相同的子应用，通过明确标注的演示数据桥接展示生命周期、路由和会话通信，不需要 Java、数据库或登录账号，也不进入生产权限菜单。详见 [可运行集成例子](micro-frontend-example.md)。
 
 | 位置 | 职责 |
 | --- | --- |
-| `apps/web-ele/src/views/data-center/index.vue` | 主应用加载、会话桥接、错误重试、卸载 |
-| `apps/web-ele/src/router/access.ts` | 在后端菜单模式补入受登录保护的数据中心菜单 |
-| `apps/web-ele/src/router/routes/modules/data-center.ts` | 前端/混合菜单模式的对应路由 |
-| `apps/web-data-center` | 子应用、独立 UMD 构建、生命周期及工作台 |
-| `packages/micro-apps` | 通信类型、路由白名单、串行生命周期控制 |
-| `config/web-ele.env.example` | 主应用开发配置样例 |
-| `scripts/deploy/nginx.micro.conf` | 同源主子应用部署示例 |
+| `apps/web-ele/src/views/data-center/index.vue` | 生产加载、认证/租户桥接、重试和卸载 |
+| `apps/web-ele/src/router/access.ts` | 后端菜单模式补入受登录保护的数据中心入口 |
+| `apps/web-ele/src/router/routes/modules/data-center.ts` | 前端/混合菜单模式对应路由 |
+| `apps/web-data-center` | 官方 Vite 插件、原生 ESM 生命周期和工作台 |
+| `apps/web-micro-demo` | 无后端的轻量独立宿主与可取消演示数据桥接 |
+| `packages/micro-apps` | 共享 props 类型、路由白名单、串行生命周期控制 |
+| `scripts/micro-demo.mjs` | 同一进程启动/关闭两个 Vite dev 或 preview 服务 |
+| `scripts/test-micro-demo.mjs` | 开发与生产均可运行的真实浏览器回归 |
+| `config/web-ele.env.example` | 原管理端开发配置样例 |
+| `scripts/deploy/nginx.micro.conf` | 同源主子应用及 API/WebSocket 部署示例 |
 
-## 本地运行
+## 从 qiankun 2 迁移的实际变化
 
-前置要求沿用仓库配置：Node.js `^22.18.0` 或 `^24.12.0`，pnpm 11。以下命令均在 `yudao-ui-admin-vben-master` 目录运行。
+1. 将 `strictStyleIsolation` 改为 v3 的 `sandbox: { styleIsolation: true }`，保留 JavaScript 沙箱；样式隔离现在使用原生 CSS `@scope`，不再创建 Shadow DOM。
+2. 删除 UMD library 模式和 build-watch 开发包装，改用标准 `index.html`、`<script type="module">`、普通 Vite 开发服务，以及从 `@qiankunjs/bundler-plugin/vite` 导入的 `qiankun()`。
+3. 子应用继续直接导出 `bootstrap`、`mount`、`update`、`unmount`；初始化放在 `mount`，清理放在 `unmount`，不依赖再次执行模块顶层代码。
+4. 明确配置 Vite 8 的 HTML 与 `src/main.ts` 双入口、`preserveEntrySignatures: 'allow-extension'` 和 `modulePreload: false`。官方 rc.2 插件负责 CORS 和入口标记，但本身不保留生命周期导出；Vite 默认构建会移除这些导出，`strict` 又可能使 HTML 指向缺少原名称的共享 chunk。当前配置生成一个正确标记的 ESM 入口，导出四个生命周期，生产浏览器已实测。
+5. 同时处理 qiankun 暴露的 `loadPromise`、`bootstrapPromise` 和 `mountPromise`；入口 503 时显示错误，重试可恢复，不遗留未处理的 Promise 拒绝。
+6. 保留 props 函数桥接，不使用 v3 已移除的 `initGlobalState`。共享 `DataCenterProps` 使用对象类型别名以满足 v3 的 `Record<string, unknown>` 约束，没有放宽为 `any`。
+
+## 运行生产管理端
+
+前置要求沿用仓库：Node.js `^22.18.0` 或 `^24.12.0`，pnpm 11。下面命令均在 `yudao-ui-admin-vben-master` 目录运行。
 
 ```bash
 pnpm install --frozen-lockfile
 cp config/web-ele.env.example apps/web-ele/.env.local
 ```
 
-终端一运行子应用：
+分别运行两个终端：
 
 ```bash
 pnpm dev:data-center
 ```
 
-终端二运行主应用：
-
 ```bash
 pnpm dev:ele
 ```
 
-访问 `http://localhost:5173`，使用实际后端账号登录，然后打开“数据中心”。后端默认由主应用 Vite 代理至 `http://localhost:48080/admin-api`；修改目标地址时调整 `apps/web-ele/vite.config.ts`。示例开启租户和验证码，需与后端设置保持一致。
+访问主应用 `http://localhost:5173/`，用实际后端账号登录后打开“数据中心”。子应用开发入口是 `http://127.0.0.1:5175/`（`localhost:5175` 也适用）。主应用 Vite 仍默认将 `/admin-api` 与 `/infra/ws` 代理到 `localhost:48080`；实际地址在 `apps/web-ele/vite.config.ts` 配置。租户和验证码开关须与后端一致。
 
-子应用在 `http://localhost:5175/` 也可以独立打开，使用自己的 hash 路由。独立预览不会伪造业务数据，也不读取主应用的本地令牌；真实数据由主应用注入接口函数后加载。
+子应用可单独打开：开发为 `http://127.0.0.1:5175/`；构建后 `pnpm -F @vben/web-data-center preview` 的地址是 `http://127.0.0.1:5175/micro-apps/data-center/`。独立预览使用 hash 路由，显示未连接状态，没有演示数据或业务令牌。要看无需后端的完整演示，应运行 `pnpm dev:micro-demo`。
 
-### 为什么开发时使用构建监听
+## 路由、权限与清理
 
-本次锁定 qiankun `2.10.16`。qiankun 2 的 HTML 入口加载器需要经典脚本导出的生命周期，而 Vite 开发服务默认生成原生 ES module。子应用使用 Vite library 模式输出一个包含 Vue/Router 的 UMD 入口，HTML 中以 `entry` 脚本加载。开发命令先构建，再开启 `vite build --watch` 和 `vite preview`，和生产使用相同的入口契约。改动子应用后等待构建完成，再刷新主应用；不依赖未经验证的 ESM 沙箱绕过插件。
+主应用路径 `/data-center` 对应 `?view=overview`、`?view=departments`、`?view=dictionaries`。嵌入时子应用使用 memory history，宿主拥有浏览器 URL；宿主路由变化通过 `update` 下发，子应用导航通过 `onNavigate` 回传。支持刷新、前进/后退，并对白名单外路径归一为总览。
 
-主应用仍使用原 Vite 开发服务和热更新。新增子应用可以选择其他技术栈，只要导出 qiankun 生命周期并遵循通信契约。
+旧数据库无需补菜单 SQL：后端菜单模式会补入不存在的 `/data-center`；已有同路径菜单保留后端定义。该路由仍经过原登录守卫，不属于免登录路由。两个精简列表接口的实际权限、租户隔离继续由后端控制。
 
-## 构建与验证
+生产宿主只传递显示名称、有效租户、语言、会话标识和两个只读函数。访问/刷新令牌和紫金桥凭据不经 props 分发。请求由原 `requestClient` 发出，保留续期、认证头、租户头、访问租户头及错误处理。
+
+切换用户/租户时宿主撤销旧请求，再下发新会话与 bridge；子应用清空旧数据重新加载。退出登录或页面销毁会取消请求、串行等待进行中的挂载并卸载。Vue 实例、路由监听和 history 在 `unmount` 中清理；旧请求即使迟到也不能回填。重复重试使用每次操作独有的版本号，避免等待卸载期间产生重复实例。可能被取消的导航守卫不会提前卸载仍可见的子应用。
+
+`@scope` 将子应用样式限制到应用容器，但不像 Shadow DOM 那样阻止宿主样式向内影响。因此子应用仍使用 `.data-center-app` 前缀，示例宿主的控制区样式也限定在自身类名下。后续弹窗、浮层等组件需要将容器设在子应用内部。qiankun 的同页面沙箱不是运行不可信代码的安全边界，入口必须来自受控部署。
+
+## 构建与部署
 
 ```bash
-# 构建主应用与子应用
+# 原管理端与真实子应用
 pnpm build:micro
 
-# 单独构建子应用
-pnpm build:data-center
+# 无后端示例宿主与同一个真实子应用
+pnpm build:micro-demo
+pnpm preview:micro-demo
 
-# 生命周期、路由、旧会话响应隔离测试，以及主子应用改动的类型检查
+# 10 项回归 + 子应用/示例完整类型检查 + 生产宿主改动的真实依赖类型检查
 pnpm check:micro
-
-# 原管理端完整类型检查（保留原有检查范围）
-pnpm -F @vben/web-ele typecheck
 ```
 
-子应用输出 `apps/web-data-center/dist/index.html`、`data-center.umd.js`、`style.css`；主应用输出仍为 `apps/web-ele/dist`。UMD 包不外置 Vue，因此主子应用不要求共享框架版本或加载顺序。
+生产子应用 `base` 固定为 `/micro-apps/data-center/`，输出 `dist/index.html` 和带 hash 的 `dist/assets/*.js`、`*.css`。HTML 中只有一个 `type="module" entry`，入口直接导出生命周期；没有 UMD 全局对象。主子各自打包 Vue，不要求框架运行时共享。
 
-## 路由、权限和会话
+生产主应用将 `VITE_GLOB_DATA_CENTER_ENTRY` 配置为 `/micro-apps/data-center/`；未设置也会使用此默认值。该变量进入原主应用运行时配置，可按原项目方式部署后调整。如果改成跨域入口，目标服务仍应在 `/micro-apps/data-center/` 提供资源，或同步修改子应用 `base` 后重新构建。
 
-主应用路径为 `/data-center`，子页面映射到 `?view=overview`、`?view=departments`、`?view=dictionaries`。子应用在嵌入时使用 memory history；因此既有主应用的 hash/history 模式均不被子应用夺取。页面刷新、浏览器前进后退会通过 `update` 同步子页面。子应用自己的导航仅接受约定的三个路由。
-
-“数据中心”入口在默认后端菜单模式下自动补入，所以旧数据库无需补菜单 SQL 即可使用；若后端已存在 `/data-center` 则保留后端定义。此路由不在免登录的 `coreRoutes` 中，仍经过现有登录守卫。当前子应用只调用原来供已登录用户使用的精简列表接口，最终权限和租户过滤由后端负责。
-
-主应用通过 `DataCenterProps` 传递用户名、有效租户、语言、会话标识和两个明确的只读函数。访问令牌、刷新令牌、紫金桥 token 不通过 props 传播。请求复用原有 `requestClient`，保持自动续期、租户头、访问租户头和错误处理。
-
-切换用户或租户时，主应用中止旧请求并更新 props，子应用立即清空旧数据重新加载。令牌过期/退出登录时会中止请求并卸载子应用；重新登录后可以重新挂载。切页导致组件销毁时，生命周期控制器串行清理尚在挂载或已挂载的实例；不在可能被取消的导航守卫中提前销毁应用。子应用销毁 Vue 实例、路由监听和未完成请求；旧请求即使迟到，也不能写入新会话。
-
-主应用采用 qiankun JavaScript 沙箱和 Shadow DOM 样式隔离。子应用不依赖向 `document.body` 传送弹窗的第三方 UI 库。以后引入此类组件时，应将弹窗容器显式设为当前子应用容器。
-
-## 部署
-
-生产构建前，将主应用配置中的 `VITE_GLOB_DATA_CENTER_ENTRY` 改为 `/micro-apps/data-center/`。该变量也写入现有的主应用运行时配置，可按原项目方式部署后调整。未设置时，生产默认使用同源路径 `/micro-apps/data-center/`。
-
-按以下结构放置两个应用的构建产物：
+部署结构：
 
 ```text
 /usr/share/nginx/html/
-  index.html                     # web-ele/dist 的全部文件
-  ...
+  index.html                       # web-ele/dist 全部内容
+  assets/...
   micro-apps/data-center/
-    index.html                   # web-data-center/dist 的全部文件
-    data-center.umd.js
-    style.css
+    index.html                     # web-data-center/dist 全部内容
+    assets/main-<hash>.js
+    assets/main-<hash>.css
 ```
 
-使用 `scripts/deploy/nginx.micro.conf`，并将其中 `yudao-server:48080` 改成实际后端地址。子应用资源路径使用 `try_files ... =404`，避免丢失资源时错误返回主应用 HTML。HTML 与当前固定文件名的子应用脚本/样式使用重新验证缓存策略，避免新入口配旧代码。
+使用 `scripts/deploy/nginx.micro.conf`，将 `yudao-server:48080` 替换为实际后端。子应用资源缺失返回 404，不回退为宿主 HTML；ESM 文件必须返回正确 JavaScript MIME。示例保留 `/admin-api`、`/infra/ws` 代理及 WebSocket Upgrade，并清空外部传入的内部身份头。更改后端 WebSocket 路径时同步修改对应 location。
 
-示例同时保留原平台 `/infra/ws` 的 WebSocket Upgrade 代理；如果部署配置更改了 `yudao.websocket.path`，同步修改这个 location。若采用网关或另行部署文件服务，继续合并对应环境原有的网关、上传大小、超时和 HTTPS 配置。
+官方插件为开发/预览开启宽松 CORS；两个 Vite 服务限定监听 `127.0.0.1`，这些服务不作为生产服务。生产推荐同源。跨域时为入口 HTML、模块和 CSS 配置明确的允许来源，所有资源都要可被宿主读取。若有 CSP，请按官方 [CSP 文档](https://www.qiankunjs.com/guide/csp-requirements) 配置原生 ESM 沙箱使用的 blob 脚本/样式和相关加载源；不要把开发服务的策略直接搬到公网。
 
-跨域部署时，入口 HTML、JS 和 CSS 均需允许主应用的明确 Origin 进行 CORS 读取。开发预览只允许本机 localhost/127.0.0.1 源；生产推荐同源反向代理，不需要开放跨域授权。配置的子应用入口必须是受信任、由本项目控制的内容；qiankun 沙箱不应当作加载不可信代码的安全边界。
+## 浏览器与预发布限制
 
-## 添加后续业务子应用
+根据 [qiankun 官方浏览器要求](https://www.qiankunjs.com/guide/browser-support)，本项目同时启用原生 ESM 与 `@scope`，可使用 Chrome/Edge 133+ 或 Safari 18.4+；Firefox 默认不具备所需的动态多 import map 能力。基础 `isRuntimeCompatible()` 并不能代表 ESM/@scope 全部能力，项目不绕过 qiankun 的浏览器检测，也不提供旧浏览器兼容回退。
 
-1. 在 `apps/` 添加独立应用并输出 qiankun `bootstrap`、`mount`、`unmount`，需要上下文/路由同步时实现 `update`。
-2. 为应用使用唯一名称、唯一容器和独立部署目录；生命周期中只在传入容器下查找挂载节点。
-3. 通过 `packages/micro-apps` 扩展明确的业务接口契约，保持认证请求由宿主或后端统一负责。
-4. 添加对应主应用路由与菜单，明确后端权限；不要把需要登录的页面加到 `coreRoutes`。
-5. 覆盖切页、加载失败、再次挂载、退出登录、切换租户和旧请求回填的测试。
+3.x 仍为 RC。升级前应核对实际发布包 API、锁文件、真实开发与生产浏览器回归，以及目标环境 CSP/CORS；不能仅以编译成功认定迁移完成。
 
-## 本次验证记录
+## 本次验证
 
-- `pnpm build:ele --concurrency=1` 完成 11 个工作区构建任务，主应用生产构建通过。
-- `pnpm build:data-center` 生成实际 HTML、UMD 与 CSS 产物；未以 Vite ESM 入口冒充 qiankun 2 子应用。
-- `pnpm check:micro` 的 7 个生命周期/路由/会话隔离测试通过；子应用完整类型检查、宿主新增页面和接入路由的真实依赖类型检查均通过。宿主定向检查配置为 `apps/web-ele/tsconfig.micro.json`，沿用原编译选项及环境声明，没有替换业务依赖或关闭类型检查。
-- 使用 Chromium 134、真实管理端生产构建和实际 PostgreSQL 后端登录，验证了 UMD 挂载、Shadow DOM、认证/租户请求头、真实部门和字典数据、子页面切换、浏览器返回、刷新以及离开后重新挂载。该过程修复了导航被取消时提前卸载子应用的竞态。
-- 最终联调连续执行 3 次快速离开与重新挂载，始终只有一个子应用实例；4 次部门请求均携带认证与正确租户头，4 次通知未读数查询均返回业务码 0。实际退出登录后子应用销毁，最后一轮全程没有页面脚本错误。
-- 原管理端全量 `vue-tsc` 在当前执行环境因内存限制被终止，不能将定向检查通过解读为所有原有业务页面已完成类型验收。大型工作区建议单独运行全量检查，避免与并行构建同时争用内存。
-- 原始初始化数据中有部分 CMS 菜单，其对应视图不在当前前端目录；原页面也引用外部图标/图片，测试环境出现了外链证书或可用性错误。这些是原项目资源和菜单的限制，本次未扩展到补建全部 CMS 业务。
+- 官方 rc.22/rc.2 实际包类型与源码已核对；`pnpm check:micro` 的 10 项测试、子应用完整类型检查、示例完整类型检查和 `web-ele/tsconfig.micro.json` 的真实依赖检查均通过。
+- `build:micro-demo` 生成原生 ESM HTML、JS 和 CSS；Chromium 134 在开发与生产分别通过 `test:micro-demo`，覆盖 @scope、双向路由、返回/刷新、租户与用户更新、故障恢复、请求取消、卸载/再次挂载、退出/登录和快速重试，均为 0 页面脚本错误。
+- `pnpm -F @vben/web-ele build` 生产构建通过；连接真实 PostgreSQL 后端在 Chromium 134 登录，验证 12 条实际部门、1556 条实际字典、ESM/@scope、返回/刷新、3 次快速离开与重新挂载、认证与正确租户头、通知查询业务码 0、退出销毁，全程无页面脚本错误。
+- 补充验证子应用独立预览、首次入口 503 后重试恢复；一键启动器在 SIGTERM 后释放两个端口，第二服务端口占用时关闭第一服务并以非零状态退出。
+- 原管理端全量 `vue-tsc` 在此前执行环境中因内存限制被终止；定向检查不代表所有既有业务页面已通过完整类型验收。保留 `pnpm -F @vben/web-ele typecheck` 供资源充足的 CI 单独运行。
+- 原始种子中部分 CMS 菜单没有对应前端视图，原页面也含外部图标/图片；本次没有扩展为补建所有 CMS 页面或替换外链资源。
 
-## 参考
+## 官方参考
 
-- [qiankun 2 主子应用接入](https://qiankun.umijs.org/guide/getting-started/)
-- [qiankun loadMicroApp、update 和样式隔离](https://qiankun.umijs.org/api/)
-- [qiankun FAQ：入口生命周期、资源与路由](https://qiankun.umijs.org/faq/)
-
-这些设计使用稳定的 qiankun 2 接口，不依赖 qiankun 3 RC 的原生 ESM 支持。
+- [qiankun 3 仓库与发布状态](https://github.com/umijs/qiankun)
+- [v2 → v3 迁移](https://www.qiankunjs.com/cookbook/migrate-from-2x)
+- [Vite 微应用](https://www.qiankunjs.com/cookbook/prepare-a-vite-app)
+- [AppConfiguration 与 CSS @scope](https://www.qiankunjs.com/api/configuration)
+- [Vite 构建配置](https://vite.dev/config/build-options)

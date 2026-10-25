@@ -445,8 +445,8 @@ catalogs:
       specifier: ^0.3.22
       version: 0.3.24
     qiankun:
-      specifier: 2.10.16
-      version: 2.10.16
+      specifier: 3.0.0-rc.22
+      version: 3.0.0-rc.22
     qrcode:
       specifier: ^1.5.4
       version: 1.5.4
@@ -1039,6 +1039,9 @@ importers:
         specifier: 'catalog:'
         version: 5.2.0(@vue/compiler-sfc@3.5.42)(esbuild@0.28.2)(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3)))(rolldown@1.2.14)(rollup@4.63.0)(vite@8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1))(vue@3.5.41(typescript@6.0.3))
     devDependencies:
+      '@qiankunjs/bundler-plugin':
+        specifier: 0.0.1-rc.2
+        version: 0.0.1-rc.2(vite@8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1))
       '@vben/tsconfig':
         specifier: workspace:*
         version: link:../../internal/tsconfig
@@ -1164,7 +1167,7 @@ importers:
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3))
       qiankun:
         specifier: 'catalog:'
-        version: 2.10.16
+        version: 3.0.0-rc.22
       sortablejs:
         specifier: 'catalog:'
         version: 1.15.7
@@ -1205,6 +1208,37 @@ importers:
       unplugin-element-plus:
         specifier: 'catalog:'
         version: 0.11.2(magic-string@1.2.3)(magicast@0.5.4)(oxc-parser@0.143.0)(rolldown@1.2.14)
+
+  apps/web-micro-demo:
+    dependencies:
+      '@vben/micro-apps':
+        specifier: workspace:*
+        version: link:../../packages/micro-apps
+      qiankun:
+        specifier: 'catalog:'
+        version: 3.0.0-rc.22
+      vue:
+        specifier: 3.5.41
+        version: 3.5.41(typescript@6.0.3)
+      vue-router:
+        specifier: 'catalog:'
+        version: 5.2.0(@vue/compiler-sfc@3.5.42)(esbuild@0.28.2)(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3)))(rolldown@1.2.14)(rollup@4.63.0)(vite@8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1))(vue@3.5.41(typescript@6.0.3))
+    devDependencies:
+      '@vben/tsconfig':
+        specifier: workspace:*
+        version: link:../../internal/tsconfig
+      '@vitejs/plugin-vue':
+        specifier: 'catalog:'
+        version: 6.0.10(vite@8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1))(vue@3.5.41(typescript@6.0.3))
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite:
+        specifier: 'catalog:'
+        version: 8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1)
+      vue-tsc:
+        specifier: 'catalog:'
+        version: 3.3.11(typescript@6.0.3)
 
   apps/web-naive:
     dependencies:
@@ -5165,6 +5199,29 @@ packages:
     resolution: {integrity: sha512-4EDEmvxWtgsCnnVeBvtFIFZtUhPPt1+bA9JrSwU4Sa//6oKtzCSlGGXYJr44OD9aGISymbieJ4mCKHUygUDU+g==}
     engines: {node: '>=18'}
 
+  '@qiankunjs/bundler-plugin@0.0.1-rc.2':
+    resolution: {integrity: sha512-Ud8SfCZ53+N4xGd/Daeaya64KmRRNeNYkVka/0BdHI0d6/XJ7Pxc2ML9fB8P+Kt+vGx3ErdSmuRfatnrtl8cdw==}
+    peerDependencies:
+      vite: '>=5.0.0'
+      webpack: ^4.0.0 || ^5.0.0
+    peerDependenciesMeta:
+      vite:
+        optional: true
+      webpack:
+        optional: true
+
+  '@qiankunjs/loader@0.1.0-rc.22':
+    resolution: {integrity: sha512-dVhzQ121warIs4xyX74SYBqCvJ0d6YHsnfuIfFl3t5Rav6wsqoLEOY4b9MWRg8M9rlglZqCYp5RWPfEJui3aZA==}
+
+  '@qiankunjs/sandbox@0.1.0-rc.18':
+    resolution: {integrity: sha512-0dnofVtAHJySzf+h6ixqzs5p/JDJkKMVWJC+nxdpQMMT9VLBHS/tnnAKpoOtd0nPcrNI76GyolceNp36I2XfSA==}
+
+  '@qiankunjs/shared@0.1.0-rc.14':
+    resolution: {integrity: sha512-TSy02SzhQKrfbcYnpLCnD+419BfdmQ41xneaQqD/LZMSrU3/HzKL8/aeYmK5857lEbHXOrewyKDaMlfsHZERCQ==}
+
+  '@qiankunjs/single-spa@0.1.0-rc.1':
+    resolution: {integrity: sha512-UjODnaJrlS3GZfJN9ZFPwegRM0VUqe08BWsik5Cef8Oox+z+Qkqnaz7rkrRMCPPeW+l+YrXCjb8t+8FJNtlMJw==}
+
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
 
@@ -8937,9 +8994,6 @@ packages:
     resolution: {integrity: sha512-/XFeXYgkuWgbtqPC7qPKvciXTvhtz7WMNQKQsAM1Kz+j0I5OWJDrybfiya6QtHF9oEvPkLwTHmC9+4OR/MmfIA==}
     engines: {node: '>=22.15'}
 
-  import-html-entry@1.17.0:
-    resolution: {integrity: sha512-2SDsRlGlE8bqdnGqsOyiDPEWlzJR0jNW4LWopnZl5QE1Yd0nJ7fykWo2GaKUF7Jq7pR0g3dElhuJHyamTt1gPQ==}
-
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
 
@@ -10524,8 +10578,8 @@ packages:
     resolution: {integrity: sha512-LjgDO2zPtoXP2wJpDjZrGdojii1uqO0cnwKoIoUzkfS98HDmbeiGmYiXo3lXeFlq2xvne1QFQhwYXSUCLKtEuA==}
     engines: {node: '>=12.20'}
 
-  qiankun@2.10.16:
-    resolution: {integrity: sha512-Q3tSVUrPnzx8ckEOKIoPnhb5LE28FPKyan/r6jEuGJGqTbIy+3rp6E2/KfU82ZI4yZpef9LFTrnxdj49jAEsmw==}
+  qiankun@3.0.0-rc.22:
+    resolution: {integrity: sha512-OSb7noswf7RJ0e+aYIjJ6MZl8IEemdfqKxCmqSXt+jBs9/mzfPbixqOFpjPB8dL09peu19U3oDhVjlmOxJynXw==}
 
   qified@0.10.1:
     resolution: {integrity: sha512-+Owyggi9IxT1ePKGafcI87ubSmxol6smwJ+RAHDQlx9+9cPwFWDiKFFCPuWhr9ignlGpZ9vDQLw67N4dcTVFEA==}
@@ -11058,9 +11112,6 @@ packages:
 
   signature_pad@5.1.4:
     resolution: {integrity: sha512-q0wO5a+U+AWPVcVmiNXz7FY4Ad1QiE8wto/3Yn41WVqepoVVYMvkb1CTokaWPUUAHWDLLabH3/acODeWM9jCrg==}
-
-  single-spa@5.9.5:
-    resolution: {integrity: sha512-9SQdmsyz4HSP+3gs6PJzhkaMEg+6zTlu9oxIghnwUX3eq+ajq4ft5egl0iyR55LAmO/UwvU8NgIWs/ZyQMa6dw==}
 
   sirv@3.0.2:
     resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
@@ -15377,6 +15428,30 @@ snapshots:
     dependencies:
       tinyexec: 1.3.1
 
+  '@qiankunjs/bundler-plugin@0.0.1-rc.2(vite@8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1))':
+    dependencies:
+      cheerio: 1.2.0
+    optionalDependencies:
+      vite: 8.3.4(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(less@4.9.0(supports-color@10.2.2))(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.51.1)(yaml@2.9.1)
+
+  '@qiankunjs/loader@0.1.0-rc.22':
+    dependencies:
+      '@qiankunjs/sandbox': 0.1.0-rc.18
+      '@qiankunjs/shared': 0.1.0-rc.14
+
+  '@qiankunjs/sandbox@0.1.0-rc.18':
+    dependencies:
+      '@qiankunjs/shared': 0.1.0-rc.14
+      lodash: 4.18.1
+
+  '@qiankunjs/shared@0.1.0-rc.14':
+    dependencies:
+      compare-versions: 6.1.1
+      es-module-lexer: 2.3.2
+      lodash: 4.18.1
+
+  '@qiankunjs/single-spa@0.1.0-rc.1': {}
+
   '@quansync/fs@1.0.0':
     dependencies:
       quansync: 1.0.0
@@ -19396,10 +19471,6 @@ snapshots:
 
   import-fresh@4.0.1: {}
 
-  import-html-entry@1.17.0:
-    dependencies:
-      '@babel/runtime': 7.29.7
-
   import-meta-resolve@4.2.0: {}
 
   import-without-cache@0.4.0: {}
@@ -21067,12 +21138,13 @@ snapshots:
     dependencies:
       escape-goat: 4.0.0
 
-  qiankun@2.10.16:
+  qiankun@3.0.0-rc.22:
     dependencies:
-      '@babel/runtime': 7.29.7
-      import-html-entry: 1.17.0
+      '@qiankunjs/loader': 0.1.0-rc.22
+      '@qiankunjs/sandbox': 0.1.0-rc.18
+      '@qiankunjs/shared': 0.1.0-rc.14
+      '@qiankunjs/single-spa': 0.1.0-rc.1
       lodash: 4.18.1
-      single-spa: 5.9.5
 
   qified@0.10.1:
     dependencies:
@@ -21678,8 +21750,6 @@ snapshots:
   signal-exit@4.1.0: {}
 
   signature_pad@5.1.4: {}
-
-  single-spa@5.9.5: {}
 
   sirv@3.0.2:
     dependencies:

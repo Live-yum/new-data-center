@@ -92,7 +92,13 @@ onBeforeUnmount(() => request?.abort());
       </div>
       <div class="dc-session">
         <span class="dc-status" :class="{ 'is-connected': connected }">
-          {{ connected ? '已连接管理平台' : '独立预览' }}
+          {{
+            context?.dataSource === 'demo'
+              ? '演示数据'
+              : connected
+                ? '已连接管理平台'
+                : '独立预览'
+          }}
         </span>
         <span v-if="context"
           >{{ context.userName }} · 租户
@@ -109,6 +115,9 @@ onBeforeUnmount(() => request?.abort());
 
     <div v-if="!connected" class="dc-notice">
       当前为子应用独立预览。请从管理平台的“数据中心”菜单进入，以当前登录身份查询真实数据。
+    </div>
+    <div v-else-if="context?.dataSource === 'demo'" class="dc-notice">
+      当前数据由独立示例宿主提供，仅用于验证微前端集成；未连接业务数据库或实时数据库。
     </div>
     <div v-if="error" class="dc-error" role="alert">{{ error }}</div>
 

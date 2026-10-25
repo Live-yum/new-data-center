@@ -32,9 +32,11 @@ describe('micro app lifecycle', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it('still runs cleanup after a mount failure', async () => {
+  it('handles loading and bootstrap rejections and still cleans up after failure', async () => {
     const unmount = vi.fn().mockResolvedValue(undefined);
     const controller = createMicroAppController(() => ({
+      loadPromise: Promise.reject(new Error('entry unavailable')),
+      bootstrapPromise: Promise.reject(new Error('entry unavailable')),
       mountPromise: Promise.reject(new Error('entry unavailable')),
       unmount,
     }));

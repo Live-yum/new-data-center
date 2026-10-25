@@ -1,0 +1,234 @@
+<script lang="ts" setup>
+import type { VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { MpAutoReplyApi } from '#/api/mp/autoReply';
+
+import { computed, nextTick, ref } from 'vue';
+
+import { DocAlert, Page, useVbenModal } from '@vben/common-ui';
+import { AutoReplyMsgType } from '@vben/constants';
+import { IconifyIcon } from '@vben/icons';
+
+import { message, Row, TabPane, Tabs } from 'antdv-next';
+
+import { ACTION_ICON, TableAction, useVbenVxeGrid } from '#/adapter/vxe-table';
+import {
+  deleteAutoReply,
+  getAutoReply,
+  getAutoReplyPage,
+} from '#/api/mp/autoReply';
+import { $t } from '#/locales';
+import { WxAccountSelect } from '#/views/mp/components';
+
+import { useGridColumns, useGridFormSchema } from './data';
+import ReplyContent from './modules/content.vue';
+import Form from './modules/form.vue';
+
+defineOptions({ name: 'MpAutoReply' });
+
+const msgType = ref<string>(String(AutoReplyMsgType.Keyword)); // 消息类型
+
+const replyCount = ref(0);
+const showCreateButton = computed(
+  () =>
+    Number(msgType.value) !== AutoReplyMsgType.Follow || replyCount.value === 0,
+); // 关注时回复只能创建一条
+
+/** 刷新表格 */
+function handleRefresh() {
+  gridApi.query();
+}
+
+const selectedAccountId = ref<number>();
+
+/** 公众号变化时查询数据 */
+async function handleAccountChange(accountId: number) {
+  selectedAccountId.value = accountId;
+  await gridApi.formApi.setValues({ accountId });
+  await gridApi.formApi.submitForm();
+}
+
+/** 切换回复类型 */
+async function onTabChange(tabName: string) {
+  msgType.value = tabName;
+  await nextTick();
+  // 更新 columns
+  const columns = useGridColumns(Number(msgType.value) as AutoReplyMsgType);
+  if (columns) {
+    // 使用 setGridOptions 更新列配置
+    gridApi.setGridOptions({ columns });
+    // 等待列配置更新完成
+    await nextTick();
+  }
+  // 查询数据
+  await gridApi.reload();
+}
+
+/** 新增自动回复 */
+async function handleCreate() {
+  const formValues = await gridApi.formApi.getValues();
+  formModalApi
+    .setData({
+      msgType: Number(msgType.value) as AutoReplyMsgType,
+      accountId: formValues.accountId,
+    })
+    .open();
+}
+
+/** 修改自动回复 */
+async function handleEdit(row: MpAutoReplyApi.AutoReply) {
+  const data = await getAutoReply(row.id!);
+  formModalApi
+    .setData({
+      msgType: Number(msgType.value) as AutoReplyMsgType,
+      accountId: row.accountId,
+      row: data,
+    })
+    .open();
+}
+
+/** 删除自动回复 */
+async function handleDelete(row: MpAutoReplyApi.AutoReply) {
+  const hideLoading = message.loading({
+    content: $t('ui.actionMessage.deleting', ['自动回复']),
+    duration: 0,
+  });
+  try {
+    await deleteAutoReply(row.id!);
+    message.success($t('ui.actionMessage.deleteSuccess'));
+    handleRefresh();
+  } finally {
+    hideLoading();
+  }
+}
+
+const [FormModal, formModalApi] = useVbenModal({
+  connectedComponent: Form,
+  destroyOnClose: true,
+});
+
+const [Grid, gridApi] = useVbenVxeGrid({
+  formOptions: {
+    handleReset: async () => {
+      await gridApi.formApi.reset();
+      await gridApi.formApi.setFieldValue('accountId', selectedAccountId.value);
+      await gridApi.formApi.submit();
+    },
+    schema: useGridFormSchema(),
+  },
+  gridOptions: {
+    columns: useGridColumns(Number(msgType.value) as AutoReplyMsgType),
+    height: 'auto',
+    keepSource: true,
+    proxyConfig: {
+      ajax: {
+        query: async ({ page }, formValues) => {
+          const data = await getAutoReplyPage({
+            pageNo: page.currentPage,
+            pageSize: page.pageSize,
+            type: Number(msgType.value) as AutoReplyMsgType,
+            ...formValues,
+          });
+          replyCount.value = data.list.length;
+          return data;
+        },
+      },
+      autoLoad: false,
+    },
+    rowConfig: {
+      keyField: 'id',
+      isHover: true,
+    },
+    toolbarConfig: {
+      refresh: true,
+      search: true,
+    },
+  } as VxeTableGridOptions<MpAutoReplyApi.AutoReply>,
+});
+</script>
+
+<template>
+  <Page auto-content-height>
+    <template #doc>
+      <DocAlert title="自动回复" url="https://doc.iocoder.cn/mp/auto-reply/" />
+    </template>
+
+    <FormModal @success="handleRefresh" />
+    <Grid>
+      <template #form-accountId>
+        <WxAccountSelect @change="handleAccountChange" />
+      </template>
+      <template #toolbar-actions>
+        <Tabs
+          v-model:active-key="msgType"
+          class="w-full"
+          @change="(activeKey) => onTabChange(activeKey as string)"
+        >
+          <TabPane :key="String(AutoReplyMsgType.Follow)">
+            <template #tab>
+              <Row align="middle">
+                <IconifyIcon icon="lucide:star" class="mr-2px" /> 关注时回复
+              </Row>
+            </template>
+          </TabPane>
+          <TabPane :key="String(AutoReplyMsgType.Message)">
+            <template #tab>
+              <Row align="middle">
+                <IconifyIcon icon="lucide:message-circle-more" class="mr-2px" />
+                消息回复
+              </Row>
+            </template>
+          </TabPane>
+          <TabPane :key="String(AutoReplyMsgType.Keyword)">
+            <template #tab>
+              <Row align="middle">
+                <IconifyIcon icon="lucide:newspaper" class="mr-2px" />
+                关键词回复
+              </Row>
+            </template>
+          </TabPane>
+        </Tabs>
+      </template>
+      <template #toolbar-tools>
+        <TableAction
+          v-if="showCreateButton"
+          :actions="[
+            {
+              label: $t('ui.actionTitle.create', ['自动回复']),
+              type: 'primary',
+              icon: ACTION_ICON.ADD,
+              auth: ['mp:auto-reply:create'],
+              onClick: handleCreate,
+            },
+          ]"
+        />
+      </template>
+      <template #replyContent="{ row }">
+        <ReplyContent :row="row" />
+      </template>
+      <template #actions="{ row }">
+        <TableAction
+          :actions="[
+            {
+              label: $t('common.edit'),
+              type: 'link',
+              icon: ACTION_ICON.EDIT,
+              auth: ['mp:auto-reply:update'],
+              onClick: handleEdit.bind(null, row),
+            },
+            {
+              label: $t('common.delete'),
+              type: 'link',
+              danger: true,
+              icon: ACTION_ICON.DELETE,
+              auth: ['mp:auto-reply:delete'],
+              popConfirm: {
+                title: '是否确认删除此数据?',
+                confirm: handleDelete.bind(null, row),
+              },
+            },
+          ]"
+        />
+      </template>
+    </Grid>
+  </Page>
+</template>

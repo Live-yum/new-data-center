@@ -1,0 +1,68 @@
+<script lang="ts" setup>
+import type { HrmSalaryChangeTemplateApi } from '#/api/hrm/salary/config/change-template';
+
+import { onMounted, ref } from 'vue';
+
+import { parseId } from '@vben/utils';
+
+import { Select } from 'ant-design-vue';
+
+import { getSalaryChangeTemplateList } from '#/api/hrm/salary/config/change-template';
+
+defineOptions({ name: 'HrmSalaryChangeTemplateSelect' });
+
+const props = withDefaults(
+  defineProps<{
+    modelValue?: number;
+  }>(),
+  {
+    modelValue: undefined,
+  },
+);
+
+const emit = defineEmits<{
+  change: [];
+  'update:modelValue': [value?: number];
+}>();
+
+const loading = ref(false);
+const templateList = ref<HrmSalaryChangeTemplateApi.SalaryChangeTemplate[]>([]);
+
+async function init() {
+  loading.value = true;
+  try {
+    templateList.value = await getSalaryChangeTemplateList();
+  } finally {
+    loading.value = false;
+  }
+  return templateList.value;
+}
+
+function handleChange(value: unknown) {
+  emit('update:modelValue', parseId(value));
+  emit('change');
+}
+
+onMounted(() => {
+  init();
+});
+
+defineExpose({ init });
+</script>
+
+<template>
+  <Select
+    :loading="loading"
+    :options="
+      templateList.map((item) => ({
+        label: item.name,
+        value: item.id,
+      }))
+    "
+    :value="modelValue"
+    allow-clear
+    class="w-full"
+    placeholder="请选择调薪模板"
+    @change="handleChange"
+  />
+</template>

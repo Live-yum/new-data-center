@@ -1,0 +1,20 @@
+# Local configuration and credentials
+.env
+.env.*
+**/application*.yaml
+**/application*.yml
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Generated files and local tooling
+node_modules/
+target/
+.idea/
+.vscode/
+*.log
+.DS_Store
+
+# Database seed files containing embedded service credentials
+*.sql

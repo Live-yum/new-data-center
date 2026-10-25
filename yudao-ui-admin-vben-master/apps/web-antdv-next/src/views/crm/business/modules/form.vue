@@ -1,0 +1,135 @@
+<script lang="ts" setup>
+import type { CrmBusinessApi } from '#/api/crm/business';
+
+import { computed, ref } from 'vue';
+
+import { useVbenModal } from '@vben/common-ui';
+import { erpPriceMultiply } from '@vben/utils';
+
+import { message } from 'antdv-next';
+
+import { useVbenForm } from '#/adapter/form';
+import {
+  createBusiness,
+  getBusiness,
+  updateBusiness,
+} from '#/api/crm/business';
+import { BizTypeEnum } from '#/api/crm/permission';
+import { $t } from '#/locales';
+import { ProductEditTable } from '#/views/crm/product/components';
+
+import { useFormSchema } from '../data';
+
+const emit = defineEmits(['success']);
+const formData = ref<CrmBusinessApi.Business>();
+const customerLocked = ref(false);
+const productFormRef = ref<InstanceType<typeof ProductEditTable>>();
+const getTitle = computed(() => {
+  return formData.value?.id
+    ? $t('ui.actionTitle.edit', ['商机'])
+    : $t('ui.actionTitle.create', ['商机']);
+});
+
+async function handleUpdateProducts(products: any) {
+  if (!formData.value) {
+    formData.value = {} as CrmBusinessApi.Business;
+  }
+  formData.value.products = products;
+  const totalProductPrice =
+    products?.reduce(
+      (prev: number, curr: any) => prev + (curr.totalPrice ?? 0),
+      0,
+    ) ?? 0;
+  const { discountPercent } = await formApi.getValues();
+  const discountPrice =
+    discountPercent === null || discountPercent === undefined
+      ? 0
+      : erpPriceMultiply(totalProductPrice, discountPercent / 100);
+  const totalPrice = totalProductPrice - (discountPrice ?? 0);
+  await formApi.setFieldValue('totalProductPrice', totalProductPrice);
+  await formApi.setFieldValue('totalPrice', totalPrice);
+}
+
+const [Form, formApi] = useVbenForm({
+  commonConfig: {
+    componentProps: {
+      class: 'w-full',
+    },
+    labelWidth: 120,
+  },
+  wrapperClass: 'grid-cols-3',
+  layout: 'vertical',
+  schema: useFormSchema(customerLocked),
+  showDefaultActions: false,
+});
+
+const [Modal, modalApi] = useVbenModal({
+  async onConfirm() {
+    const { valid } = await formApi.validate();
+    if (!valid) {
+      return;
+    }
+    const productForm = Array.isArray(productFormRef.value)
+      ? productFormRef.value[0]
+      : productFormRef.value;
+    try {
+      await productForm?.validate();
+    } catch (error: any) {
+      message.error(error.message || '产品明细校验失败');
+      return;
+    }
+    modalApi.lock();
+    // 提交表单
+    const data = (await formApi.getValues()) as CrmBusinessApi.Business;
+    data.products = formData.value?.products;
+    try {
+      await (formData.value?.id ? updateBusiness(data) : createBusiness(data));
+      // 关闭并提示
+      await modalApi.close();
+      emit('success');
+      message.success($t('ui.actionMessage.operationSuccess'));
+    } finally {
+      modalApi.unlock();
+    }
+  },
+  async onOpenChange(isOpen: boolean) {
+    if (!isOpen) {
+      customerLocked.value = false;
+      formData.value = undefined;
+      return;
+    }
+    // 加载数据
+    const data = modalApi.getData() as CrmBusinessApi.Business;
+    customerLocked.value = !data?.id && !!data?.customerId;
+    if (!data || !data.id) {
+      await formApi.setValues(data ?? {});
+      return;
+    }
+    modalApi.lock();
+    try {
+      formData.value = data.id ? await getBusiness(data.id) : data;
+      // 设置到 values
+      await formApi.setValues(formData.value);
+    } finally {
+      modalApi.unlock();
+    }
+  },
+});
+</script>
+
+<template>
+  <Modal :title="getTitle" class="w-1/2">
+    <Form class="mx-4">
+      <template #product="slotProps">
+        <ProductEditTable
+          ref="productFormRef"
+          v-bind="slotProps.componentProps"
+          class="w-full"
+          :products="formData?.products ?? []"
+          :biz-type="BizTypeEnum.CRM_BUSINESS"
+          @update:products="handleUpdateProducts"
+        />
+      </template>
+    </Form>
+  </Modal>
+</template>

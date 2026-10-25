@@ -1,0 +1,153 @@
+<script lang="ts" setup>
+import type { CrmContractApi } from '#/api/crm/contract';
+
+import { computed, ref } from 'vue';
+
+import { useVbenForm, useVbenModal } from '@vben/common-ui';
+import { erpPriceMultiply } from '@vben/utils';
+
+import { message } from 'ant-design-vue';
+
+import { getBusiness } from '#/api/crm/business';
+import {
+  createContract,
+  getContract,
+  updateContract,
+} from '#/api/crm/contract';
+import { BizTypeEnum } from '#/api/crm/permission';
+import { $t } from '#/locales';
+import { ProductEditTable } from '#/views/crm/product/components';
+
+import { useFormSchema } from '../data';
+
+const emit = defineEmits(['success']);
+const formData = ref<CrmContractApi.Contract>();
+const productFormRef = ref<InstanceType<typeof ProductEditTable>>();
+const getTitle = computed(() => {
+  return formData.value?.id
+    ? $t('ui.actionTitle.edit', ['合同'])
+    : $t('ui.actionTitle.create', ['合同']);
+});
+
+/** 更新产品列表 */
+async function handleUpdateProducts(products: any) {
+  if (!formData.value) {
+    formData.value = {} as CrmContractApi.Contract;
+  }
+  formData.value.products = products;
+  const totalProductPrice =
+    products?.reduce(
+      (prev: number, curr: any) => prev + (curr.totalPrice ?? 0),
+      0,
+    ) ?? 0;
+  const { discountPercent } = await formApi.getValues();
+  const discountPrice =
+    discountPercent === null || discountPercent === undefined
+      ? 0
+      : erpPriceMultiply(totalProductPrice, discountPercent / 100);
+  const totalPrice = totalProductPrice - (discountPrice ?? 0);
+  await formApi.setFieldValue('totalProductPrice', totalProductPrice);
+  await formApi.setFieldValue('totalPrice', totalPrice);
+}
+
+async function handleCustomerChange() {
+  await formApi.setValues({ businessId: undefined, signContactId: undefined });
+  await handleUpdateProducts([]);
+}
+
+async function handleBusinessChange(id?: number) {
+  if (!id) {
+    await handleUpdateProducts([]);
+    return;
+  }
+  const business = await getBusiness(id);
+  const products = (business.products ?? []).map((product) => ({
+    ...product,
+    contractPrice: product.businessPrice,
+  }));
+  await handleUpdateProducts(products);
+}
+
+const [Form, formApi] = useVbenForm({
+  commonConfig: {
+    componentProps: {
+      class: 'w-full',
+    },
+    labelWidth: 120,
+  },
+  wrapperClass: 'grid-cols-3',
+  layout: 'vertical',
+  schema: useFormSchema({
+    onCustomerChange: handleCustomerChange,
+    onBusinessChange: handleBusinessChange,
+  }),
+  showDefaultActions: false,
+});
+
+const [Modal, modalApi] = useVbenModal({
+  async onConfirm() {
+    const { valid } = await formApi.validate();
+    if (!valid) {
+      return;
+    }
+    const productForm = Array.isArray(productFormRef.value)
+      ? productFormRef.value[0]
+      : productFormRef.value;
+    try {
+      await productForm?.validate();
+    } catch (error: any) {
+      message.error(error.message || '产品明细校验失败');
+      return;
+    }
+    modalApi.lock();
+    // 提交表单
+    const data = (await formApi.getValues()) as CrmContractApi.Contract;
+    data.products = formData.value?.products;
+    try {
+      await (formData.value?.id ? updateContract(data) : createContract(data));
+      // 关闭并提示
+      await modalApi.close();
+      emit('success');
+      message.success($t('ui.actionMessage.operationSuccess'));
+    } finally {
+      modalApi.unlock();
+    }
+  },
+  async onOpenChange(isOpen: boolean) {
+    if (!isOpen) {
+      formData.value = undefined;
+      return;
+    }
+    // 加载数据
+    const data = modalApi.getData() as CrmContractApi.Contract;
+    if (!data || !data.id) {
+      return;
+    }
+    modalApi.lock();
+    try {
+      formData.value = await getContract(data.id);
+      // 设置到 values
+      await formApi.setValues(formData.value);
+    } finally {
+      modalApi.unlock();
+    }
+  },
+});
+</script>
+
+<template>
+  <Modal :title="getTitle" class="w-1/2">
+    <Form class="mx-4">
+      <template #product="slotProps">
+        <ProductEditTable
+          ref="productFormRef"
+          v-bind="slotProps.componentProps"
+          class="w-full"
+          :products="formData?.products ?? []"
+          :biz-type="BizTypeEnum.CRM_CONTRACT"
+          @update:products="handleUpdateProducts"
+        />
+      </template>
+    </Form>
+  </Modal>
+</template>

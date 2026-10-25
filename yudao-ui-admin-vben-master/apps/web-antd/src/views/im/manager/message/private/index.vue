@@ -1,0 +1,104 @@
+<script lang="ts" setup>
+import type { VxeTableGridOptions } from '#/adapter/vxe-table';
+import type { ImManagerPrivateMessageApi } from '#/api/im/manager/message/private';
+
+import { onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
+
+import { Page } from '@vben/common-ui';
+import { parseId } from '@vben/utils';
+
+import { ACTION_ICON, TableAction, useVbenVxeGrid } from '#/adapter/vxe-table';
+import { getManagerPrivateMessagePage } from '#/api/im/manager/message/private';
+import { formatUserLabel } from '#/views/im/manager/utils/format';
+import { MESSAGE_PRIVATE_READ_ENABLED } from '#/views/im/utils/config';
+
+import { MessageContentPreview } from '..';
+import { usePrivateGridColumns, usePrivateGridFormSchema } from '../data';
+import Detail from './modules/detail.vue';
+
+defineOptions({ name: 'ImPrivateMessage' });
+
+const route = useRoute();
+const detailRef = ref<InstanceType<typeof Detail>>();
+
+/** 打开详情 */
+function handleDetail(row: ImManagerPrivateMessageApi.PrivateMessage) {
+  detailRef.value?.open(row);
+}
+
+const [Grid, gridApi] = useVbenVxeGrid({
+  formOptions: {
+    schema: usePrivateGridFormSchema(),
+  },
+  gridOptions: {
+    columns: usePrivateGridColumns(MESSAGE_PRIVATE_READ_ENABLED),
+    height: 'auto',
+    keepSource: true,
+    proxyConfig: {
+      autoLoad: false,
+      ajax: {
+        query: async ({ page }, formValues) => {
+          return await getManagerPrivateMessagePage({
+            pageNo: page.currentPage,
+            pageSize: page.pageSize,
+            ...formValues,
+          });
+        },
+      },
+    },
+    rowConfig: {
+      keyField: 'id',
+      isHover: true,
+    },
+    toolbarConfig: {
+      refresh: true,
+      search: true,
+    },
+  } as VxeTableGridOptions<ImManagerPrivateMessageApi.PrivateMessage>,
+});
+
+onMounted(async () => {
+  await gridApi.formApi.setValues({
+    senderId: route.query.senderId ? parseId(route.query.senderId) : undefined,
+    receiverId: route.query.receiverId
+      ? parseId(route.query.receiverId)
+      : undefined,
+  });
+  await gridApi.formApi.submit();
+});
+</script>
+
+<template>
+  <Page auto-content-height>
+    <Detail ref="detailRef" />
+    <Grid table-title="私聊消息列表">
+      <template #sender="{ row }">
+        {{ formatUserLabel(row.senderNickname, row.senderId) }}
+      </template>
+      <template #receiver="{ row }">
+        {{ formatUserLabel(row.receiverNickname, row.receiverId) }}
+      </template>
+      <template #content="{ row }">
+        <MessageContentPreview
+          :content="row.content"
+          :sender-nickname="row.senderNickname"
+          :type="row.type"
+        />
+      </template>
+      <template #actions="{ row }">
+        <TableAction
+          :actions="[
+            {
+              label: '详情',
+              type: 'link',
+              icon: ACTION_ICON.VIEW,
+              auth: ['im:manager:message:query'],
+              onClick: handleDetail.bind(null, row),
+            },
+          ]"
+        />
+      </template>
+    </Grid>
+  </Page>
+</template>

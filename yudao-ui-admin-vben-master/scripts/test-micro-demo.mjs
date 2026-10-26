@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
 import { chromium } from 'playwright';
 
@@ -11,11 +13,97 @@ page.setDefaultTimeout(15_000);
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 const url = process.env.MICRO_DEMO_URL || 'http://127.0.0.1:5174/';
+const screenshotDirectory = process.env.MICRO_DEMO_SCREENSHOT_DIR;
 
 async function mounted(target = page) {
   await target.getByTestId('status').filter({ hasText: '已挂载' }).waitFor();
   await target.locator('.dc-toolbar p').filter({ hasText: '更新于' }).waitFor();
   assert.equal(await target.locator('.data-center-app').count(), 1);
+}
+
+async function captureScreenshots() {
+  if (!screenshotDirectory) return;
+  const directory = resolve(screenshotDirectory);
+  await mkdir(directory, { recursive: true });
+  const captures = [];
+  for (const [name, viewport] of [
+    ['desktop', { width: 1440, height: 1100 }],
+    ['mobile', { width: 390, height: 844 }],
+  ]) {
+    const target = await browser.newPage({
+      viewport,
+      deviceScaleFactor: 1,
+      isMobile: name === 'mobile',
+      hasTouch: name === 'mobile',
+      locale: 'zh-CN',
+      reducedMotion: 'reduce',
+    });
+    target.setDefaultTimeout(15_000);
+    target.on('pageerror', (error) => errors.push(error.message));
+    try {
+      await target.goto(url);
+      await mounted(target);
+      await target.getByTestId('pending').filter({ hasText: /^0$/ }).waitFor();
+      assert.equal(await target.getByTestId('route').innerText(), '/overview');
+      assert.equal(
+        await target
+          .getByTestId('micro-container')
+          .locator('.data-center-app')
+          .count(),
+        1,
+        `${name}: 截图必须包含真实挂载的子应用`,
+      );
+      assert.equal(await target.locator('.dc-status').innerText(), '演示数据');
+      assert.deepEqual(
+        await target.locator('.dc-metrics strong').allTextContents(),
+        ['2', '2', '3'],
+      );
+      assert.equal(await target.locator('.demo-error, .dc-error').count(), 0);
+      await target.evaluate(() => document.fonts.ready);
+      assert.equal(
+        await target.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+        true,
+        `${name}: 页面不应出现横向溢出`,
+      );
+      const filename = `micro-demo-${name}.png`;
+      await target.screenshot({
+        path: join(directory, filename),
+        fullPage: true,
+        animations: 'disabled',
+      });
+      captures.push({
+        filename,
+        viewport,
+        url: target.url(),
+        entry: await target.locator('.demo-entry code').innerText(),
+        status: await target.getByTestId('status').innerText(),
+        dataSource: 'demo',
+      });
+    } finally {
+      await target.close();
+    }
+  }
+  assert.deepEqual(errors, []);
+  await writeFile(
+    join(directory, 'verification.json'),
+    `${JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        commit: process.env.GITHUB_SHA || null,
+        browser: browser.version(),
+        pageErrors: errors,
+        captures,
+        note: '真实 qiankun 挂载截图；宿主演示数据，未连接业务或实时数据库。',
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  console.log(`真实桌面 / 移动端截图及验证记录：${directory}`);
 }
 
 try {
@@ -135,6 +223,7 @@ try {
   await mounted(recovery);
   await recovery.close();
   assert.deepEqual(errors, []);
+  await captureScreenshots();
   console.log(
     `PASS ${url}：原生 ESM 挂载、CSS @scope、双向路由/返回/刷新、租户/用户 update、故障恢复、请求取消、卸载/重挂载/退出、快速重试、独立预览、入口503后重试恢复；0 pageerror。`,
   );

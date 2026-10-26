@@ -37,10 +37,30 @@ jobs:
         run: pnpm check:micro
       - name: Build the real child app and demo host
         run: pnpm build:micro-demo
-      - name: Install Playwright Chromium and system dependencies
+      - name: Verify runner Chrome and Chinese screenshot fonts
+        timeout-minutes: 5
         run: |
-          pnpm exec playwright install --with-deps chromium
-          sudo apt-get install --no-install-recommends --yes fonts-noto-cjk
+          mkdir -p "$RUNNER_TEMP/micro-demo-artifacts"
+          # The hosted runner already ships Chrome and its runtime dependencies.
+          # Avoid upgrading unrelated system libraries or downloading a second browser.
+          chrome="$(command -v google-chrome || command -v google-chrome-stable)"
+          test -x "$chrome"
+          version="$("$chrome" --version)"
+          major="$(printf '%s' "$version" | grep -oE '[0-9]+' | head -1)"
+          test "$major" -ge 133
+          printf 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=%s\n' "$chrome" >> "$GITHUB_ENV"
+          printf '%s\n%s\n' "$chrome" "$version" | tee "$RUNNER_TEMP/micro-demo-artifacts/browser-environment.log"
+          # The previous run exhausted 25 minutes downloading the 61 MB Noto CJK
+          # package. Require real Chinese glyph coverage, using the smaller WQY
+          # package only when the image does not already contain a Chinese font.
+          if [[ -z "$(fc-list :lang=zh-cn file)" ]]; then
+            timeout 180s sudo apt-get --no-install-recommends --yes \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 install fonts-wqy-zenhei
+            fc-cache -f
+          fi
+          test -n "$(fc-list :lang=zh-cn file)"
+          fc-match -f '%{family}\n' 'sans:lang=zh-cn' | tee -a "$RUNNER_TEMP/micro-demo-artifacts/browser-environment.log"
       - name: Run browser regressions against built preview and capture screenshots
         env:
           MICRO_DEMO_SCREENSHOT_DIR: ${{ runner.temp }}/micro-demo-artifacts

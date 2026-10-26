@@ -18,6 +18,7 @@ public final class IotDashboardValidator {
    Grid g=w.grid(); check(g!=null && g.x()>=0 && g.y()>=0 && g.y()<=1000 && g.w()>0 && g.h()>0 && g.h()<=50 && g.x()+g.w()<=12);
    check(w.timeWindowSeconds()>=1 && w.timeWindowSeconds()<=604800);
    check(w.aggregation()!=null && Set.of("RAW","AVG","MIN","MAX","LAST").contains(w.aggregation()));
+   check(Set.of("line","bar").contains(w.type()) || "RAW".equals(w.aggregation()));
    check(w.unit()==null || w.unit().length()<=32);
    check(w.min()==null || Double.isFinite(w.min())); check(w.max()==null || Double.isFinite(w.max()));
    check(w.min()==null || w.max()==null || w.min()<w.max());

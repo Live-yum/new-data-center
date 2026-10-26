@@ -228,12 +228,17 @@ jobs:
 
           deadline = time.monotonic() + 90
           while True:
-              os.kill(int(os.environ['IOT_TEST_PID']), 0)
+              try:
+                  os.kill(int(os.environ['IOT_TEST_PID']), 0)
+              except ProcessLookupError:
+                  print(Path(os.environ['RUNNER_TEMP'], 'iot-service-artifacts', 'service.log').read_text())
+                  raise RuntimeError('Packaged IoT service exited before accepting HTTP')
               try:
                   status, body = request()
                   break
               except (URLError, TimeoutError):
                   if time.monotonic() >= deadline:
+                      print(Path(os.environ['RUNNER_TEMP'], 'iot-service-artifacts', 'service.log').read_text())
                       raise RuntimeError('Packaged IoT service did not accept HTTP within 90 seconds')
                   time.sleep(1)
           # A real security denial is required, not a 404, startup 500 or stub response.

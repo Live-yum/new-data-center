@@ -70,7 +70,7 @@ async function refresh() {
   }
 }
 
-watch(() => [state.props.context?.sessionKey, state.props.bridge], refresh, {
+watch([() => state.props.context?.sessionKey, () => state.props.bridge], refresh, {
   immediate: true,
 });
 watch(

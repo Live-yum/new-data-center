@@ -10,8 +10,8 @@ const directory = resolve(
 );
 await mkdir(directory, { recursive: true });
 const url = new URL(process.env.MICRO_DEMO_URL || 'http://127.0.0.1:5174/');
-url.pathname = '/data-center';
-url.searchParams.set('view', 'dashboards');
+// The demo host deliberately uses hash history; a pathname query is not a Vue route.
+url.hash = '/data-center?view=dashboards';
 const browser = await chromium.launch({
   executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
   headless: true,

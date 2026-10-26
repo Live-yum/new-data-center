@@ -614,7 +614,7 @@ async function saveMappings() {
     notice.value = '测点映射已保存';
   });
 }
-watch(() => [state.props.context?.sessionKey, state.props.bridge], initialize, {
+watch([() => state.props.context?.sessionKey, () => state.props.bridge], initialize, {
   immediate: true,
 });
 watch(currentDevice, () => {

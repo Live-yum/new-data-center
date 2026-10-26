@@ -134,6 +134,33 @@ describe('IoT workbench session, cancellation and conflict integration', () => {
     return node!;
   }
 
+  it('route-only qiankun updates preserve edited board, binding draft and selected device', async () => {
+    const bridge=api({devices:vi.fn(async()=>[{id:1,name:'甲',code:'A'},{id:2,name:'乙',code:'B'}])});
+    await mount({container,...props(bridge)});await settle();
+    const select=container.querySelector<HTMLSelectElement>('[data-testid="iot-device-select"]')!;select.value='2';select.dispatchEvent(new Event('change',{bubbles:true}));
+    button('iot-edit').click();await settle();
+    const name=container.querySelector<HTMLInputElement>('[aria-label="看板名称"]')!;name.value='路由切换保留的草稿';name.dispatchEvent(new Event('input',{bubbles:true}));
+    const configure=Array.from(container.querySelectorAll('button')).find(b=>b.textContent?.trim()==='配置')!;configure.click();await settle();
+    const title=container.querySelector<HTMLInputElement>('[data-testid="iot-binding-title"]')!;title.value='尚未应用的组件草稿';title.dispatchEvent(new Event('input',{bubbles:true}));await settle();
+    await update({route:'/widgets'});await settle();await update({route:'/dashboards'});await settle();
+    expect(bridge.devices).toHaveBeenCalledTimes(1);
+    expect(container.querySelector<HTMLInputElement>('[aria-label="看板名称"]')!.value).toBe('路由切换保留的草稿');
+    expect(container.querySelector<HTMLInputElement>('[data-testid="iot-binding-title"]')!.value).toBe('尚未应用的组件草稿');
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="iot-device-select"]')!.value).toBe('2');
+  });
+  it('route-only updates preserve history conditions and export navigation does not abort the session',async()=>{
+    const bridge=api();const initial=props(bridge,'session-one','/history');
+    await mount({container,...initial,onNavigate:path=>{void update({route:path});}});await settle();
+    const interval=container.querySelector<HTMLInputElement>('[aria-label="采样间隔秒"]')!;interval.value='15';interval.dispatchEvent(new Event('input',{bubbles:true}));await settle();
+    await update({route:'/widgets'});await settle();await update({route:'/history'});await settle();
+    expect(container.querySelector<HTMLInputElement>('[aria-label="采样间隔秒"]')!.value).toBe('15');
+    button('iot-export').click();await settle();
+    expect(bridge.createExport).toHaveBeenCalledTimes(1);expect(bridge.devices).toHaveBeenCalledTimes(1);
+    const signal=vi.mocked(bridge.createExport).mock.calls[0]![1];expect(signal.aborted).toBe(false);
+    expect(container.textContent).toContain('下载任务已创建');
+    await vi.waitFor(()=>expect(bridge.exports).toHaveBeenCalled());
+  });
+
   it('mounts the real dashboard route, renders bridge data and preserves host URL', async () => {
     const url = window.location.href;
     const bridge = api();

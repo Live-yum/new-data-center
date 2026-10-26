@@ -7,3 +7,6 @@ export type {
   DataCenterDictData,
   DataCenterProps,
 } from './types';
+export type * from './iot';
+
+export { normalizeIotError } from './iot-errors';

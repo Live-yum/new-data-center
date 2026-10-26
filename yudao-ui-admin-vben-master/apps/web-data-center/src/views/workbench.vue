@@ -84,35 +84,6 @@ onBeforeUnmount(() => request?.abort());
 
 <template>
   <section class="data-center-app" aria-label="数据中心工作台">
-    <header class="dc-header">
-      <div>
-        <p class="dc-eyebrow">DATA CENTER</p>
-        <h1>数据中心工作台</h1>
-        <p class="dc-description">在统一工作台查看部门和数据字典。</p>
-      </div>
-      <div class="dc-session">
-        <span class="dc-status" :class="{ 'is-connected': connected }">
-          {{
-            context?.dataSource === 'demo'
-              ? '演示数据'
-              : connected
-                ? '已连接管理平台'
-                : '独立预览'
-          }}
-        </span>
-        <span v-if="context"
-          >{{ context.userName }} · 租户
-          {{ context.tenantId ?? '未启用' }}</span
-        >
-      </div>
-    </header>
-
-    <nav class="dc-nav" aria-label="工作台导航">
-      <RouterLink to="/overview">总览</RouterLink>
-      <RouterLink to="/departments">部门目录</RouterLink>
-      <RouterLink to="/dictionaries">数据字典</RouterLink>
-    </nav>
-
     <div v-if="!connected" class="dc-notice">
       当前为子应用独立预览。请从管理平台的“数据中心”菜单进入，以当前登录身份查询真实数据。
     </div>

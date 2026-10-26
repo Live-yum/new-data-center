@@ -1,0 +1,57 @@
+# Standalone only: activated by IotServerApplication, not by the aggregate entry point.
+spring:
+  application:
+    name: yudao-module-iot
+  config:
+    import: classpath:yudao-database-postgresql.yaml
+  main:
+    allow-circular-references: true
+  cloud:
+    discovery:
+      client:
+        simple:
+          instances:
+            system-server:
+              - uri: ${SYSTEM_SERVICE_URL:http://127.0.0.1:48081}
+            infra-server:
+              - uri: ${INFRA_SERVICE_URL:http://127.0.0.1:48082}
+    openfeign:
+      client:
+        config:
+          default:
+            connectTimeout: 5000
+            readTimeout: 10000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
+server:
+  port: ${IOT_SERVER_PORT:48083}
+yudao:
+  info:
+    version: 2026.09
+    base-package: cn.iocoder.yudao
+  rpc:
+    enabled: true
+  security:
+    mock-enable: false
+    trust-login-user-header: false
+  tenant:
+    enable: true
+  web:
+    admin-ui:
+      url: ${ADMIN_UI_URL:http://localhost:5173}
+  realdb:
+    enabled: ${REALDB_ENABLED:false}
+  iot:
+    realdb-zone: ${REALDB_ZONE:UTC}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never

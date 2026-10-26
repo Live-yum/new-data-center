@@ -4,7 +4,9 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.iocoder.yudao.framework.common.util.json.JsonUtils;
 import cn.iocoder.yudao.framework.mybatis.core.handler.DefaultDBFieldHandler;
+import cn.iocoder.yudao.framework.mybatis.core.handler.NumericBooleanTypeHandler;
 import com.baomidou.mybatisplus.annotation.DbType;
+import com.baomidou.mybatisplus.autoconfigure.ConfigurationCustomizer;
 import com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration;
 import com.baomidou.mybatisplus.core.handlers.IJsonTypeHandler;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
@@ -56,6 +58,16 @@ public class YudaoMybatisAutoConfiguration {
     @Bean
     public MetaObjectHandler defaultMetaObjectHandler() {
         return new DefaultDBFieldHandler(); // 自动填充参数类
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "yudao.mybatis", name = "numeric-boolean", havingValue = "true")
+    public ConfigurationCustomizer numericBooleanConfigurationCustomizer() {
+        return configuration -> {
+            NumericBooleanTypeHandler typeHandler = new NumericBooleanTypeHandler();
+            configuration.getTypeHandlerRegistry().register(Boolean.class, typeHandler);
+            configuration.getTypeHandlerRegistry().register(boolean.class, typeHandler);
+        };
     }
 
     @Bean

@@ -28,7 +28,24 @@ async function generateAccess(options: GenerateMenuAndRoutesOptions) {
       // 由于 yudao 通过 accessStore 读取，所以不在进行 message.loading 提示
       // 补充说明：accessStore.accessMenus 一开始是 AppRouteRecordRaw 类型（后端加载），后面被赋值成 MenuRecordRaw 类型（前端转换）
       const accessMenus = accessStore.accessMenus as AppRouteRecordRaw[];
-      return convertServerMenuToRouteRecordStringComponent(accessMenus);
+      const serverRoutes =
+        convertServerMenuToRouteRecordStringComponent(accessMenus);
+      // 数据中心是登录后的固定入口，兼容无需新增数据库菜单的旧环境。
+      // 请求继续经过后端权限校验，不将该页面加入免登录 coreRoutes。
+      if (!serverRoutes.some((item) => item.path === '/data-center')) {
+        serverRoutes.push({
+          name: 'DataCenter',
+          path: '/data-center',
+          component: '/data-center/index',
+          meta: {
+            icon: 'lucide:database',
+            keepAlive: false,
+            order: 1,
+            title: '数据中心',
+          },
+        });
+      }
+      return serverRoutes;
     },
     // 可以指定没有权限跳转403页面
     forbiddenComponent,

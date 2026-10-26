@@ -1,0 +1,135 @@
+body {
+  margin: 0;
+  background: #f1f5f9;
+  color: #172c40;
+  font-family: system-ui, sans-serif;
+}
+.micro-demo {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 36px 24px;
+}
+.micro-demo .demo-heading {
+  margin-bottom: 24px;
+}
+.micro-demo .demo-heading h1 {
+  margin: 8px 0;
+  font-size: 32px;
+}
+.micro-demo .demo-heading p {
+  line-height: 1.7;
+}
+.micro-demo .demo-eyebrow {
+  color: #0c7668;
+  font-size: 12px;
+  font-weight: 700;
+}
+.micro-demo .demo-warning {
+  color: #925500;
+  font-size: 14px;
+}
+.micro-demo .demo-controls,
+.micro-demo .demo-child,
+.micro-demo .demo-log {
+  background: white;
+  border: 1px solid #dbe4eb;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.micro-demo .demo-actions,
+.micro-demo .demo-fields,
+.micro-demo .demo-routes,
+.micro-demo .demo-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.micro-demo .demo-fields label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.micro-demo .demo-actions button,
+.micro-demo .demo-fields select {
+  font: inherit;
+  background: white;
+  border: 1px solid #aabdc9;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #172c40;
+  cursor: pointer;
+}
+.micro-demo .demo-actions button:first-child {
+  background: #0c7668;
+  color: white;
+  border-color: #0c7668;
+}
+.micro-demo .demo-actions button:disabled,
+.micro-demo .demo-fields select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.micro-demo .demo-routes a {
+  color: #0c7668;
+  font-size: 14px;
+}
+.micro-demo .demo-routes .router-link-exact-active {
+  font-weight: 700;
+}
+.micro-demo .demo-state {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.micro-demo .demo-entry {
+  color: #526779;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.micro-demo .demo-error {
+  color: #ac2c38;
+}
+.micro-demo .demo-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #526779;
+}
+.micro-demo .demo-child {
+  min-height: 120px;
+}
+.micro-demo .demo-log h2 {
+  font-size: 18px;
+  margin-top: 0;
+}
+.micro-demo .demo-log p {
+  color: #526779;
+  line-height: 1.7;
+  font-size: 14px;
+}
+.micro-demo .demo-log ol {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 0;
+}
+.micro-demo .demo-log li {
+  padding: 8px 0;
+  border-top: 1px solid #eef2f6;
+  font-size: 13px;
+}
+.micro-demo .demo-log li span {
+  color: #77899a;
+  margin-right: 14px;
+}
+@media (max-width: 600px) {
+  .micro-demo {
+    padding: 20px 12px;
+  }
+  .micro-demo .demo-controls,
+  .micro-demo .demo-child,
+  .micro-demo .demo-log {
+    padding: 16px;
+  }
+}

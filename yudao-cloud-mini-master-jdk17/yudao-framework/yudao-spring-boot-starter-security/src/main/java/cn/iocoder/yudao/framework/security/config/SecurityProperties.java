@@ -28,6 +28,15 @@ public class SecurityProperties {
     private String tokenParameter = "token";
 
     /**
+     * 是否信任网关或服务间传递的 login-user 身份请求头。
+     *
+     * 兼容独立微服务的可信网关模式，缺省启用；通过 Nginx 或直接对外提供服务时必须关闭，
+     * 由本服务校验访问令牌，不能将外部请求头当作已认证身份。
+     */
+    @NotNull(message = "是否信任登录用户请求头不能为空")
+    private Boolean trustLoginUserHeader = true;
+
+    /**
      * mock 模式的开关
      */
     @NotNull(message = "mock 模式的开关不能为空")

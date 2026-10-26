@@ -64,7 +64,15 @@
     "test:e2e": "turbo run test:e2e",
     "update:deps": "npx taze -r -w",
     "version": "pnpm exec changeset version && pnpm install --no-frozen-lockfile",
-    "catalog": "pnpm dlx codemod pnpm/catalog"
+    "catalog": "pnpm dlx codemod pnpm/catalog",
+    "dev:data-center": "pnpm -F @vben/web-data-center run dev",
+    "build:data-center": "pnpm -F @vben/web-data-center run build",
+    "build:micro": "pnpm run build:ele && pnpm run build:data-center",
+    "check:micro": "pnpm exec vitest run packages/micro-apps/src/lifecycle.test.ts apps/web-data-center/src/lifecycle.test.ts apps/web-micro-demo/src/demo-bridge.test.ts && pnpm -F @vben/web-data-center run typecheck && pnpm -F @vben/web-micro-demo run typecheck && pnpm -F @vben/web-ele run typecheck:micro",
+    "dev:micro-demo": "node scripts/micro-demo.mjs dev",
+    "build:micro-demo": "pnpm run build:data-center && pnpm -F @vben/web-micro-demo run build",
+    "preview:micro-demo": "node scripts/micro-demo.mjs preview",
+    "test:micro-demo": "node scripts/test-micro-demo.mjs"
   },
   "dependencies": {
     "sortablejs": "catalog:"

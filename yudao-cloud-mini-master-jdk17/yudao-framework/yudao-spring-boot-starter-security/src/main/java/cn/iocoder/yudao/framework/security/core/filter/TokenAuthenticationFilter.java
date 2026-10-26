@@ -46,8 +46,10 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
     @SuppressWarnings("NullableProblems")
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        // 情况一，基于 header[login-user] 获得用户，例如说来自 Gateway 或者其它服务透传
-        LoginUser loginUser = buildLoginUserByHeader(request);
+        // 情况一，仅可信网关或服务间调用模式允许从 login-user 头获取身份。
+        // 聚合服务直连 Nginx 时不解析此头，必须继续通过访问令牌认证。
+        LoginUser loginUser = Boolean.TRUE.equals(securityProperties.getTrustLoginUserHeader())
+                ? buildLoginUserByHeader(request) : null;
 
         // 情况二，基于 Token 获得用户
         // 注意，这里主要满足直接使用 Nginx 直接转发到 Spring Cloud 服务的场景。

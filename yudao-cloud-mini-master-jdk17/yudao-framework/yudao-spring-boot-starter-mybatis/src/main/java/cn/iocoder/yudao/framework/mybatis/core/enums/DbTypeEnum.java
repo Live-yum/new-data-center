@@ -67,7 +67,7 @@ public enum DbTypeEnum {
     ;
 
     public static final Map<String, DbTypeEnum> MAP_BY_NAME = Arrays.stream(values())
-            .collect(Collectors.toMap(DbTypeEnum::getProductName, Function.identity()));
+            .collect(Collectors.toMap(DbTypeEnum::getProductName, Function.identity(), (first, second) -> first));
 
     public static final Map<DbType, DbTypeEnum> MAP_BY_MP = Arrays.stream(values())
             .collect(Collectors.toMap(DbTypeEnum::getMpDbType, Function.identity()));
@@ -89,7 +89,10 @@ public enum DbTypeEnum {
         if (StrUtil.isBlank(databaseProductName)) {
             return null;
         }
-        return MAP_BY_NAME.get(databaseProductName).getMpDbType();
+        return Arrays.stream(values())
+                .filter(value -> value.getProductName().equalsIgnoreCase(databaseProductName.trim()))
+                .map(DbTypeEnum::getMpDbType)
+                .findFirst().orElse(null);
     }
 
     public static String getFindInSetTemplate(DbType dbType) {

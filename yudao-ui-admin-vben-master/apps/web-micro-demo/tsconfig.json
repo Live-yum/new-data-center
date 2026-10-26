@@ -1,0 +1,4 @@
+{
+  "extends": "@vben/tsconfig/web.json",
+  "include": ["src/**/*.ts", "src/**/*.vue"]
+}

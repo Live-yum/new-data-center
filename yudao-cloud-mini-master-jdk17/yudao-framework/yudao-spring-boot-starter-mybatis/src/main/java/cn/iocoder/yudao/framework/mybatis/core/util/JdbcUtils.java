@@ -59,9 +59,11 @@ public class JdbcUtils {
             dataSource = SpringUtils.getBean(DataSource.class);
         }
         try (Connection conn = dataSource.getConnection()) {
-            return DbTypeEnum.find(conn.getMetaData().getDatabaseProductName());
+            DbType dbType = DbTypeEnum.find(conn.getMetaData().getDatabaseProductName());
+            // 部分国产数据库 JDBC 返回带版本号的产品名，此时以连接协议识别方言。
+            return dbType != null ? dbType : getDbType(conn.getMetaData().getURL());
         } catch (SQLException e) {
-            throw new IllegalArgumentException(e.getMessage());
+            throw new IllegalArgumentException("无法识别数据库类型", e);
         }
     }
 

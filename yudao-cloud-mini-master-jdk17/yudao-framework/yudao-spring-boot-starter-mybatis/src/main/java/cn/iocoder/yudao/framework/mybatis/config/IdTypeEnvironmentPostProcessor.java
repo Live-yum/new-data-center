@@ -83,6 +83,7 @@ public class IdTypeEnvironmentPostProcessor implements EnvironmentPostProcessor 
         // 根据 dbType 类型，获取对应的 driverClass
         switch (dbType) {
             case POSTGRE_SQL:
+            case KINGBASE_ES: // 本项目的 KingbaseES 使用 PG 兼容模式，Quartz 表使用 BYTEA。
                 driverClass = "org.quartz.impl.jdbcjobstore.PostgreSQLDelegate";
                 break;
             case ORACLE:
@@ -94,21 +95,19 @@ public class IdTypeEnvironmentPostProcessor implements EnvironmentPostProcessor 
                 driverClass = "org.quartz.impl.jdbcjobstore.MSSQLDelegate";
                 break;
             case DM:
-            case KINGBASE_ES:
                 driverClass = "org.quartz.impl.jdbcjobstore.StdJDBCDelegate";
                 break;
         }
         // 设置 driverClass 变量
         if (StrUtil.isNotEmpty(driverClass)) {
-            environment.getSystemProperties().put(QUARTZ_JOB_STORE_DRIVER_KEY, driverClass);
+            Map<String, Object> properties = new HashMap<>();
+            properties.put(QUARTZ_JOB_STORE_DRIVER_KEY, driverClass);
+            environment.getPropertySources().addLast(new MapPropertySource("quartzJobStoreDriver", properties));
         }
     }
 
     public static DbType getDbType(ConfigurableEnvironment environment) {
-        String primary = environment.getProperty(DATASOURCE_DYNAMIC_KEY + "." + "primary");
-        if (StrUtil.isEmpty(primary)) {
-            return null;
-        }
+        String primary = environment.getProperty(DATASOURCE_DYNAMIC_KEY + ".primary", "master");
         String url = environment.getProperty(DATASOURCE_DYNAMIC_KEY + ".datasource." + primary + ".url");
         if (StrUtil.isEmpty(url)) {
             return null;

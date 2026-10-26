@@ -21,6 +21,11 @@
     <url>https://github.com/YunaiV/ruoyi-vue-pro</url>
 
     <dependencies>
+        <!-- 独立的紫金桥实时库客户端，默认禁用，按需配置 yudao.realdb -->
+        <dependency>
+            <groupId>cn.iocoder.cloud</groupId>
+            <artifactId>yudao-spring-boot-starter-realdb</artifactId>
+        </dependency>
         <dependency>
             <groupId>cn.iocoder.cloud</groupId>
             <artifactId>yudao-module-system-server</artifactId>

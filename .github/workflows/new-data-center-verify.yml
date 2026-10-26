@@ -1,0 +1,229 @@
+name: New data center verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: new-data-center-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  micro-frontend:
+    name: Micro frontend build, browser regression and screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: yudao-ui-admin-vben-master
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.18.0"
+      - name: Install the repository's pinned pnpm
+        run: npm install --global pnpm@11.16.0 --registry=https://registry.npmjs.org
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+      - name: Unit regressions and micro frontend type checks
+        run: pnpm check:micro
+      - name: Build the real child app and demo host
+        run: pnpm build:micro-demo
+      - name: Install Playwright Chromium and system dependencies
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get install --no-install-recommends --yes fonts-noto-cjk
+      - name: Run browser regressions against built preview and capture screenshots
+        env:
+          MICRO_DEMO_SCREENSHOT_DIR: ${{ runner.temp }}/micro-demo-artifacts
+        run: |
+          mkdir -p "$MICRO_DEMO_SCREENSHOT_DIR"
+          pnpm preview:micro-demo > "$MICRO_DEMO_SCREENSHOT_DIR/preview.log" 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:5174/ > /dev/null && \
+               curl --fail --silent http://127.0.0.1:5175/micro-apps/data-center/ > /dev/null; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$preview_pid" 2>/dev/null; then
+              cat "$MICRO_DEMO_SCREENSHOT_DIR/preview.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then
+            cat "$MICRO_DEMO_SCREENSHOT_DIR/preview.log"
+            echo 'Built preview did not become ready within 60 seconds.' >&2
+            exit 1
+          fi
+          pnpm test:micro-demo 2>&1 | tee "$MICRO_DEMO_SCREENSHOT_DIR/browser-test.log"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/micro-demo-desktop.png"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/micro-demo-mobile.png"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/verification.json"
+      - name: Upload screenshots and preview diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: micro-demo-preview-${{ github.sha }}
+          path: ${{ runner.temp }}/micro-demo-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  java-postgresql:
+    name: Java 17 tests with real PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: yudao_test
+          POSTGRES_USER: yudao_test
+          # Disposable, job-local database only; never a deployment credential.
+          POSTGRES_PASSWORD: ci_ephemeral_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U yudao_test -d yudao_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: yudao-cloud-mini-master-jdk17
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Initialize and verify the disposable PostgreSQL schema
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PGPASSWORD: ci_ephemeral_password
+          PGOPTIONS: -c search_path=public
+        run: |
+          # The upstream SQL contains DROP statements: use only this job's new service.
+          psql=(docker exec -i --env PGPASSWORD --env PGOPTIONS "$POSTGRES_CONTAINER_ID"
+                psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432
+                --username=yudao_test --dbname=yudao_test --set=ON_ERROR_STOP=1)
+          "${psql[@]}" --file=- <<'SQL'
+          DO $$
+          BEGIN
+            IF current_database() <> 'yudao_test' OR current_user <> 'yudao_test' THEN
+              RAISE EXCEPTION 'Schema initialization is restricted to the disposable yudao_test database';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                AND n.nspname NOT LIKE 'pg_toast%'
+                AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+            ) THEN
+              RAISE EXCEPTION 'Refusing to initialize a non-empty database';
+            END IF;
+          END;
+          $$;
+          SQL
+          "${psql[@]}" --file=- < sql/postgresql/ruoyi-vue-pro.sql
+          "${psql[@]}" --file=- < sql/postgresql/quartz.sql
+          "${psql[@]}" --file=- <<'SQL'
+          DO $$
+          BEGIN
+            IF to_regclass('public.system_notify_message') IS NULL
+              OR to_regclass('public.system_sms_code') IS NULL
+              OR to_regclass('public.system_notify_message_seq') IS NULL
+              OR to_regclass('public.system_sms_code_seq') IS NULL
+              OR to_regclass('public.qrtz_job_details') IS NULL THEN
+              RAISE EXCEPTION 'Required business tables, sequences or Quartz schema are missing';
+            END IF;
+            IF (
+              SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND (
+                (table_name = 'system_notify_message' AND column_name = 'read_status' AND data_type = 'boolean')
+                OR (table_name = 'system_sms_code' AND column_name = 'used' AND data_type = 'smallint')
+                OR (table_name IN ('system_notify_message', 'system_sms_code') AND column_name = 'deleted' AND data_type = 'smallint')
+              )
+            ) <> 4 THEN
+              RAISE EXCEPTION 'Required native/numeric Boolean column types do not match';
+            END IF;
+          END;
+          $$;
+          SELECT current_database() AS database, current_schema() AS schema,
+            (SELECT count(*) FROM pg_tables WHERE schemaname = 'public') AS tables,
+            (SELECT count(*) FROM pg_sequences WHERE schemaname = 'public') AS sequences;
+          SQL
+      - name: Run reactor tests, including external database regressions
+        env:
+          DATABASE_TEST_URL: jdbc:postgresql://127.0.0.1:5432/yudao_test
+          DATABASE_TEST_USERNAME: yudao_test
+          DATABASE_TEST_PASSWORD: ci_ephemeral_password
+        run: mvn --batch-mode --no-transfer-progress -pl yudao-server -am test
+      - name: Summarize Surefire and require non-skipped database tests
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          reports = sorted(Path('.').glob('**/target/surefire-reports/TEST-*.xml'))
+          required = {
+              'cn.iocoder.yudao.framework.mybatis.DatabaseCompatibilityTest',
+              'cn.iocoder.yudao.module.system.dal.mysql.BooleanColumnDatabaseTest',
+          }
+          verified = set()
+          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+          rows = []
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              counts = {key: int(suite.get(key, '0')) for key in totals}
+              for key, value in counts.items():
+                  totals[key] += value
+              name = suite.get('name', str(report))
+              rows.append('| ' + name + ' | ' + ' | '.join(str(counts[key]) for key in totals) + ' |')
+              if (name in required and counts['tests'] > 0
+                      and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))):
+                  verified.add(name)
+          summary = '\n'.join([
+              '## Java 17 / PostgreSQL test results',
+              '',
+              '| Test suite | Tests | Failures | Errors | Skipped |',
+              '| --- | ---: | ---: | ---: | ---: |',
+              *rows,
+              '| **Total** | ' + ' | '.join(str(totals[key]) for key in totals) + ' |',
+              '',
+              'The two external database regressions must execute against the disposable PostgreSQL service.',
+              'This job does not validate a KingbaseES server or connect the frontend demo to a database.',
+          ]) + '\n'
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(summary)
+          if not reports or totals['tests'] == 0:
+              raise SystemExit('No executed Surefire tests were found.')
+          if totals['failures'] or totals['errors']:
+              raise SystemExit('Surefire contains failed tests.')
+          if required != verified:
+              raise SystemExit('Missing, failed or skipped database regressions: ' + ', '.join(sorted(required - verified)))
+          PY
+      - name: Upload Surefire test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: java-postgresql-tests-${{ github.sha }}
+          path: yudao-cloud-mini-master-jdk17/**/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7

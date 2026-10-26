@@ -10,7 +10,6 @@ import cn.iocoder.yudao.framework.common.biz.system.tenant.TenantCommonApi;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.cloud.openfeign.EnableFeignClients;
-import org.springframework.context.annotation.Configuration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Real Feign registrar: same service destination must not imply the same client context. */
@@ -26,7 +25,7 @@ class IotFeignRegistrationTest {
                     }
                 });
     }
-    @Configuration(proxyBeanMethods = false)
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
     @EnableFeignClients(clients = {ApiAccessLogCommonApi.class, ApiErrorLogCommonApi.class,
             DictDataCommonApi.class, OperateLogCommonApi.class, OAuth2TokenCommonApi.class,
             PermissionCommonApi.class, TenantCommonApi.class})

@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -116,7 +115,7 @@ class IotControllerSecurityTest {
                 .addFilters(new TenantContextWebFilter(), context.getBean("springSecurityFilterChain", Filter.class)).build();
     }
 
-    @Configuration(proxyBeanMethods = false)
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
     @EnableWebSecurity
     @EnableMethodSecurity
     @EnableWebMvc

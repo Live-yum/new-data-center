@@ -19,7 +19,6 @@ import jakarta.servlet.Filter;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -54,7 +53,7 @@ class IotStandaloneSecurityConfigurationTest {
                 });
     }
 
-    @Configuration(proxyBeanMethods = false)
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
     @EnableWebSecurity
     @EnableWebMvc
     @Import({YudaoWebSecurityConfigurerAdapter.class, IotController.class})

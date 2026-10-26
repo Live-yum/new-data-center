@@ -64,9 +64,9 @@ const layouts: Record<
       [800, 300],
     ],
     main: 'M202 300H290 M290 170V430 M290 170H440 M290 430H440 M520 170H650V430H520 M650 300H748 M852 300H975',
-    branch: 'M800 255V70H150V255',
+    branch: 'M800 255V100H150V255',
     labels: [
-      { x: 400, y: 60, text: '回水支路示意' },
+      { x: 400, y: 92, text: '回水支路示意' },
       { x: 870, y: 285, text: '供水 →' },
     ],
   },
@@ -248,7 +248,7 @@ const layout = computed(() => layouts[props.scene.id]!);
       y="35"
       text-anchor="middle"
       fill="#7899ae"
-      font-size="11"
+      font-size="12"
       letter-spacing="3"
     >
       {{

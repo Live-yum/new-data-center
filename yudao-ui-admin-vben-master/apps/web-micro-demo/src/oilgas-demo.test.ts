@@ -17,6 +17,37 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('read-only oil and gas demo fixtures', () => {
+  it('rejects tank-only level for transfer pumps instead of manufacturing a reading', async () => {
+    const api = bridge();
+    for (const id of [123, 124]) {
+      await expect(
+        api.demoOilgasQuery!(
+          'realtime',
+          { deviceIds: [id], metricKeys: ['level'], aggregation: 'RAW' },
+          signal(),
+        ),
+      ).rejects.toThrow('未配置');
+      const reading = await api.demoOilgasQuery!(
+        'realtime',
+        {
+          deviceIds: [id],
+          metricKeys: ['flow', 'temperature'],
+          aggregation: 'RAW',
+        },
+        signal(),
+      );
+      expect(reading.series.map((s) => s.metricKey)).toEqual([
+        'flow',
+        'temperature',
+      ]);
+    }
+    const tank = await api.demoOilgasQuery!(
+      'realtime',
+      { deviceIds: [121], metricKeys: ['level'], aggregation: 'RAW' },
+      signal(),
+    );
+    expect(tank.series[0]!.unit).toBe('%');
+  });
   it('provides five distinct scenes and twenty unique catalog devices isolated from existing boilers', async () => {
     expect(oilgasScenes.map((scene) => scene.id)).toEqual([
       'separation',

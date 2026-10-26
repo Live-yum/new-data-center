@@ -346,3 +346,27 @@
     padding: 8px;
   }
 }
+
+.dc-shell .og-diagram-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.dc-shell .og-pan-hint {
+  display: none;
+}
+@media (max-width: 700px) {
+  .dc-shell .og-diagram-scroll .og-process {
+    width: 900px;
+    min-width: 900px;
+    max-width: none;
+  }
+  .dc-shell .og-pan-hint {
+    display: block;
+    margin: 0;
+    padding: 2px 12px 10px;
+    color: #a9c7d6;
+    font-size: 11px;
+  }
+}

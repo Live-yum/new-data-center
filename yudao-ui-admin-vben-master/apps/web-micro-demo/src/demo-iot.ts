@@ -19,12 +19,18 @@ function oilgasMappings(deviceId: number): IotMapping[] | undefined {
   const scene = oilgasScene(deviceId);
   const device = scene?.devices.find((item) => item.id === deviceId);
   return scene && device
-    ? scene.metrics.map(({ metricKey, name, unit }) => ({
-        metricKey,
-        name,
-        unit: metricKey === 'flow' ? (device.flowUnit ?? unit) : unit,
-        pointName: `DEMO.${device.code}.${metricKey}`,
-      }))
+    ? scene.metrics
+        .filter(
+          (m) =>
+            !device.availableMetrics ||
+            device.availableMetrics.includes(m.metricKey),
+        )
+        .map(({ metricKey, name, unit }) => ({
+          metricKey,
+          name,
+          unit: metricKey === 'flow' ? (device.flowUnit ?? unit) : unit,
+          pointName: `DEMO.${device.code}.${metricKey}`,
+        }))
     : undefined;
 }
 

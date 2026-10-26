@@ -42,6 +42,45 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 describe('oilgas demo isolation and readonly interactions', () => {
+  it('removes tank level from pump cards and queries, resetting the old metric and aborting its request', async () => {
+    const p = props('/demo-storage');
+    const query = vi.spyOn(p.bridge!.iot!, 'demoOilgasQuery');
+    await mount(p);
+    await settle();
+    expect(
+      container
+        .querySelector('[data-testid="oilgas-trend"]')
+        ?.getAttribute('data-metric'),
+    ).toBe('level');
+    const oldSignal = query.mock.calls.find(([mode]) => mode === 'history')![2];
+    container
+      .querySelector('[data-testid="equipment-123"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(oldSignal.aborted).toBe(true);
+    const select = container.querySelector(
+      '[data-testid="oilgas-metric"]',
+    ) as HTMLSelectElement;
+    expect([...select.options].map((option) => option.value)).toEqual([
+      'temperature',
+      'flow',
+    ]);
+    expect(select.value).toBe('temperature');
+    expect(
+      container.querySelector('.og-device-panel')?.textContent,
+    ).not.toContain('液位');
+    expect(
+      query.mock.calls.some(
+        ([, q]) => q.deviceIds.includes(123) && q.metricKeys.includes('level'),
+      ),
+    ).toBe(false);
+    expect(
+      container
+        .querySelector('[data-testid="oilgas-trend"]')
+        ?.getAttribute('data-device-id'),
+    ).toBe('123');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
   it('does not query or show simulated readings outside demo context', async () => {
     const p = props();
     p.context!.dataSource = 'platform';
@@ -110,7 +149,7 @@ describe('oilgas demo isolation and readonly interactions', () => {
     });
     await mount(p);
     await settle();
-    expect(completions).toHaveLength(2);
+    expect(completions).toHaveLength(5);
     await update(props('/demo-gas', 'two'));
     await settle();
     expect(signals.every((s) => s.aborted)).toBe(true);

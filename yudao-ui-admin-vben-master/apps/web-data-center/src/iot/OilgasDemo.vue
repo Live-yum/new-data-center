@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { IotSeries } from '@vben/micro-apps';
 import { oilgasScenes } from '@vben/micro-apps';
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { dataCenterKey } from '../context';
 import ProcessDiagram from './ProcessDiagram.vue';
@@ -20,6 +20,7 @@ const enabled = computed(
     state?.props.context?.dataSource === 'demo' &&
     !!state?.props.bridge?.iot?.demoOilgasQuery,
 );
+const diagramScroll = ref<HTMLElement>();
 const selected = ref(0);
 const metricKey = ref('');
 const realtime = ref<IotSeries[]>([]);
@@ -34,6 +35,13 @@ const device = computed(
   () =>
     scene.value.devices.find((d) => d.id === selected.value) ??
     scene.value.devices[0]!,
+);
+const availableMetrics = computed(() =>
+  scene.value.metrics.filter(
+    (m) =>
+      !device.value.availableMetrics ||
+      device.value.availableMetrics.includes(m.metricKey),
+  ),
 );
 const metric = computed(
   () =>
@@ -55,7 +63,7 @@ const readings = computed(() =>
   ),
 );
 const cards = computed(() =>
-  scene.value.metrics
+  availableMetrics.value
     .filter((m) => m.metricKey !== 'running_state')
     .map((m) => ({
       ...m,
@@ -104,14 +112,24 @@ async function refresh() {
     const end = new Date();
     try {
       const [live, past] = await Promise.all([
-        bridge.demoOilgasQuery!(
-          'realtime',
-          {
-            deviceIds: scene.value.devices.map((d) => d.id),
-            metricKeys: scene.value.metrics.map((m) => m.metricKey),
-            aggregation: 'RAW',
-          },
-          controller.signal,
+        Promise.all(
+          scene.value.devices.map((d) =>
+            bridge.demoOilgasQuery!(
+              'realtime',
+              {
+                deviceIds: [d.id],
+                metricKeys: scene.value.metrics
+                  .filter(
+                    (m) =>
+                      !d.availableMetrics ||
+                      d.availableMetrics.includes(m.metricKey),
+                  )
+                  .map((m) => m.metricKey),
+                aggregation: 'RAW',
+              },
+              controller.signal,
+            ),
+          ),
         ),
         bridge.demoOilgasQuery!(
           'history',
@@ -127,11 +145,14 @@ async function refresh() {
         ),
       ]);
       if (version !== generation || controller.signal.aborted) return;
-      if (live.source !== 'DEMO' || past.source !== 'DEMO')
+      if (
+        live.some((result) => result.source !== 'DEMO') ||
+        past.source !== 'DEMO'
+      )
         throw new Error('演示页面拒绝非 DEMO 数据源');
-      realtime.value = live.series;
+      realtime.value = live.flatMap((result) => result.series);
       history.value = past.series;
-      lastUpdated.value = live.series[0]?.points.at(-1)?.time ?? '';
+      lastUpdated.value = realtime.value[0]?.points.at(-1)?.time ?? '';
       error.value = '';
     } catch (cause) {
       if (version !== generation || controller.signal.aborted) return;
@@ -157,6 +178,16 @@ watch(
   { immediate: true, flush: 'sync' },
 );
 watch(
+  availableMetrics,
+  () => {
+    if (!availableMetrics.value.some((m) => m.metricKey === metricKey.value))
+      metricKey.value = availableMetrics.value.find(
+        (m) => m.metricKey !== 'running_state',
+      )!.metricKey;
+  },
+  { flush: 'sync' },
+);
+watch(
   [
     () => state?.props.bridge,
     () => state?.props.context?.sessionKey,
@@ -168,6 +199,22 @@ watch(
   ],
   () => void refresh(),
   { immediate: true },
+);
+watch(
+  () => device.value.id,
+  async () => {
+    await nextTick();
+    const panel = diagramScroll.value;
+    const element = panel?.querySelector(
+      `[data-testid="equipment-${device.value.id}"]`,
+    );
+    if (!panel || !element || panel.scrollWidth <= panel.clientWidth) return;
+    const bounds = element.getBoundingClientRect();
+    const viewport = panel.getBoundingClientRect();
+    panel.scrollLeft +=
+      bounds.left + bounds.width / 2 - viewport.left - viewport.width / 2;
+  },
+  { immediate: true, flush: 'post' },
 );
 onBeforeUnmount(stop);
 function time(value: string) {
@@ -211,12 +258,23 @@ function time(value: string) {
           <h2>工艺总览 <small>PROCESS VIEW</small></h2>
           <span>选择设备查看测点 ↗</span>
         </div>
-        <ProcessDiagram
-          :scene="scene"
-          :selected="device.id"
-          :readings="readings"
-          @select="selected = $event"
-        />
+        <p class="og-pan-hint" data-testid="oilgas-pan-hint">
+          左右滑动查看完整工艺图 · 选择设备自动定位
+        </p>
+        <div
+          ref="diagramScroll"
+          class="og-diagram-scroll"
+          data-testid="oilgas-diagram-scroll"
+          tabindex="0"
+          aria-label="工艺图，可左右滚动"
+        >
+          <ProcessDiagram
+            :scene="scene"
+            :selected="device.id"
+            :readings="readings"
+            @select="selected = $event"
+          />
+        </div>
         <div class="og-flow-footer">
           <span><i></i> 主流程示意 <i class="og-gas"></i> 支路示意</span
           ><span>原创 SVG · 非 P&amp;ID</span>
@@ -278,7 +336,7 @@ function time(value: string) {
             data-testid="oilgas-metric"
           >
             <option
-              v-for="m in scene.metrics.filter(
+              v-for="m in availableMetrics.filter(
                 (v) => v.metricKey !== 'running_state',
               )"
               :key="m.metricKey"

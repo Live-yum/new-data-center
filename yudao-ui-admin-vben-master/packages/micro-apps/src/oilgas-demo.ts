@@ -13,6 +13,7 @@ export interface OilgasDevice {
   kind: 'separator' | 'tank' | 'pump' | 'compressor' | 'tower';
   metricKey: string;
   flowUnit?: string;
+  availableMetrics?: string[];
   flowBase?: number;
 }
 export interface OilgasScene {
@@ -163,6 +164,7 @@ export const oilgasScenes: OilgasScene[] = [
         id: 123,
         name: '外输泵 A',
         code: 'STO-P303',
+        availableMetrics: ['temperature', 'flow', 'running_state'],
         kind: 'pump',
         metricKey: 'flow',
       },
@@ -170,6 +172,7 @@ export const oilgasScenes: OilgasScene[] = [
         id: 124,
         name: '外输泵 B',
         code: 'STO-P304',
+        availableMetrics: ['temperature', 'flow', 'running_state'],
         kind: 'pump',
         metricKey: 'flow',
       },

@@ -103,9 +103,15 @@ async function diagramGeometry() {
       }))
       .filter(({ box }) => box.width && box.height);
     const problems = [];
+    const pan = svg.closest('[data-testid="oilgas-diagram-scroll"]');
     const panel = svg.closest('.og-flow-panel').getBoundingClientRect();
-    if (view.left < panel.left - 1 || view.right > panel.right + 1)
-      problems.push('Diagram extends beyond the screenshot-visible panel');
+    // A labelled internal horizontal pan is intentional on narrow screens.
+    if (!pan || pan.scrollWidth <= pan.clientWidth) {
+      if (view.left < panel.left - 1 || view.right > panel.right + 1)
+        problems.push(
+          'Diagram extends beyond the screenshot-visible panel without a scroll surface',
+        );
+    }
     for (const { label, box } of text) {
       if (
         box.x < view.x - 1 ||
@@ -229,36 +235,41 @@ try {
             'trend follows selected device',
           );
           await ready(scene);
-        }
-        const continuousMetrics = catalog.metrics
-          .filter((entry) => entry.metricKey !== 'running_state')
-          .map((entry) => entry.metricKey);
-        assert.deepEqual(
-          await page
-            .getByTestId('oilgas-metric')
-            .locator('option')
-            .evaluateAll((nodes) => nodes.map((node) => node.value).sort()),
-          [...continuousMetrics].sort(),
-        );
-        for (const metric of continuousMetrics) {
-          await page.getByTestId('oilgas-metric').selectOption(metric);
-          await until(
-            async () =>
-              (await page
-                .getByTestId('oilgas-trend')
-                .getAttribute('data-metric')) === metric,
-            'trend follows selected metric',
+          const continuousMetrics = catalog.metrics
+            .filter(
+              (entry) =>
+                entry.metricKey !== 'running_state' &&
+                (!device.availableMetrics ||
+                  device.availableMetrics.includes(entry.metricKey)),
+            )
+            .map((entry) => entry.metricKey);
+          assert.deepEqual(
+            await page
+              .getByTestId('oilgas-metric')
+              .locator('option')
+              .evaluateAll((nodes) => nodes.map((node) => node.value).sort()),
+            [...continuousMetrics].sort(),
           );
-          await ready(scene);
-          assert.ok(
-            (await page.getByTestId('oilgas-samples').innerText()).includes(
-              metric === 'flow' && catalog.devices.at(-1).flowUnit
-                ? catalog.devices.at(-1).flowUnit
-                : catalog.metrics.find((entry) => entry.metricKey === metric)
-                    .unit,
-            ),
-            'Sample units must match the selected catalog metric',
-          );
+          for (const metric of continuousMetrics) {
+            await page.getByTestId('oilgas-metric').selectOption(metric);
+            await until(
+              async () =>
+                (await page
+                  .getByTestId('oilgas-trend')
+                  .getAttribute('data-metric')) === metric,
+              'trend follows selected metric',
+            );
+            await ready(scene);
+            assert.ok(
+              (await page.getByTestId('oilgas-samples').innerText()).includes(
+                metric === 'flow' && device.flowUnit
+                  ? device.flowUnit
+                  : catalog.metrics.find((entry) => entry.metricKey === metric)
+                      .unit,
+              ),
+              'Sample units must match the selected catalog metric',
+            );
+          }
         }
         assert.match(await root.innerText(), /样例运行状态/);
         const samples = await page.getByTestId('oilgas-samples').innerText();
@@ -298,6 +309,44 @@ try {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(sceneUrl('separation'));
       await ready('separation');
+      const pan = page.getByTestId('oilgas-diagram-scroll');
+      assert.equal(
+        await pan.evaluate(
+          (node) =>
+            node.scrollWidth > node.clientWidth &&
+            ['auto', 'scroll'].includes(getComputedStyle(node).overflowX),
+        ),
+        true,
+        'Mobile diagram has a genuine internal horizontal scroll surface',
+      );
+      await page.getByTestId('oilgas-pan-hint').waitFor();
+      const labelHeights = await page
+        .getByTestId('process-diagram')
+        .locator('text')
+        .evaluateAll((nodes) =>
+          nodes.map((node) => node.getBoundingClientRect().height),
+        );
+      assert.ok(
+        labelHeights.length > 0 && labelHeights.every((height) => height >= 10),
+        'Mobile diagram labels must remain readable at actual CSS pixel size',
+      );
+      const catalog = oilgasScenes.find((scene) => scene.id === 'separation');
+      for (const id of [catalog.devices.at(-1).id, catalog.devices[0].id]) {
+        await page.getByTestId('oilgas-device').selectOption(String(id));
+        await ready('separation');
+        await until(async () => {
+          const surface = await pan.boundingBox();
+          const device = await page
+            .getByTestId(`equipment-${id}`)
+            .boundingBox();
+          return (
+            device &&
+            surface &&
+            device.x + device.width / 2 >= surface.x &&
+            device.x + device.width / 2 <= surface.x + surface.width
+          );
+        }, 'selected mobile equipment scrolls into the readable viewport');
+      }
       await capture('separation', 'mobile');
       await page.setViewportSize({ width: 1600, height: 1100 });
     },

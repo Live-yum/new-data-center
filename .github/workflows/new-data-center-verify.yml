@@ -111,6 +111,61 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Initialize and verify the disposable PostgreSQL schema
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PGPASSWORD: ci_ephemeral_password
+          PGOPTIONS: -c search_path=public
+        run: |
+          # The upstream SQL contains DROP statements: use only this job's new service.
+          psql=(docker exec -i --env PGPASSWORD --env PGOPTIONS "$POSTGRES_CONTAINER_ID"
+                psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432
+                --username=yudao_test --dbname=yudao_test --set=ON_ERROR_STOP=1)
+          "${psql[@]}" --file=- <<'SQL'
+          DO $$
+          BEGIN
+            IF current_database() <> 'yudao_test' OR current_user <> 'yudao_test' THEN
+              RAISE EXCEPTION 'Schema initialization is restricted to the disposable yudao_test database';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                AND n.nspname NOT LIKE 'pg_toast%'
+                AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+            ) THEN
+              RAISE EXCEPTION 'Refusing to initialize a non-empty database';
+            END IF;
+          END;
+          $$;
+          SQL
+          "${psql[@]}" --file=- < sql/postgresql/ruoyi-vue-pro.sql
+          "${psql[@]}" --file=- < sql/postgresql/quartz.sql
+          "${psql[@]}" --file=- <<'SQL'
+          DO $$
+          BEGIN
+            IF to_regclass('public.system_notify_message') IS NULL
+              OR to_regclass('public.system_sms_code') IS NULL
+              OR to_regclass('public.system_notify_message_seq') IS NULL
+              OR to_regclass('public.system_sms_code_seq') IS NULL
+              OR to_regclass('public.qrtz_job_details') IS NULL THEN
+              RAISE EXCEPTION 'Required business tables, sequences or Quartz schema are missing';
+            END IF;
+            IF (
+              SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND (
+                (table_name = 'system_notify_message' AND column_name = 'read_status' AND data_type = 'boolean')
+                OR (table_name = 'system_sms_code' AND column_name = 'used' AND data_type = 'smallint')
+                OR (table_name IN ('system_notify_message', 'system_sms_code') AND column_name = 'deleted' AND data_type = 'smallint')
+              )
+            ) <> 4 THEN
+              RAISE EXCEPTION 'Required native/numeric Boolean column types do not match';
+            END IF;
+          END;
+          $$;
+          SELECT current_database() AS database, current_schema() AS schema,
+            (SELECT count(*) FROM pg_tables WHERE schemaname = 'public') AS tables,
+            (SELECT count(*) FROM pg_sequences WHERE schemaname = 'public') AS sequences;
+          SQL
       - name: Run reactor tests, including external database regressions
         env:
           DATABASE_TEST_URL: jdbc:postgresql://127.0.0.1:5432/yudao_test

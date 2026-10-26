@@ -90,6 +90,8 @@ MICRO_DEMO_SCREENSHOT_DIR=/tmp/micro-demo-artifacts pnpm test:micro-demo
 
 工作流产物 `micro-demo-preview-<sha>` 保存两张 PNG、验证记录和 preview / 浏览器测试日志，保留 7 天。独立 Java 17 任务连接临时 PostgreSQL 服务运行 `mvn -pl yudao-server -am test`，汇总 Surefire 的测试、失败、错误及跳过数量，并要求两项外部数据库回归确实执行、不得跳过；报告在 `java-postgresql-tests-<sha>` 中。该任务不代表 KingbaseES 服务实测通过。
 
+Java 任务先按 [数据库说明](database.md#postgresql-本地启动) 导入 `sql/postgresql/ruoyi-vue-pro.sql` 和 `quartz.sql`。导入通过本次任务新建的 PostgreSQL service 容器内的 `psql` 执行，连接固定为容器本机的 `127.0.0.1:5432/yudao_test`，密码仅在该步骤的环境变量中传入；开启 `ON_ERROR_STOP` 并拒绝非空数据库。导入后检查业务 Mapper 测试需要的两张表、序列及 BOOL / SMALLINT 列，再运行原始测试，不能用跳过测试代替初始化。上游 SQL 含 `DROP`，此 CI 流程仅用于新建的一次性测试库，不能对已有业务库执行。
+
 工作流仅使用 `contents: read`，不读取仓库 secrets、不保留 Git 凭据、不部署。浏览器和 PostgreSQL 均由临时 GitHub-hosted runner 提供；依赖和官方 actions 固定版本或提交。
 
 ## 5. 关键代码

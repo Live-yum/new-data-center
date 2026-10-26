@@ -4,6 +4,8 @@ import type {
   DataCenterDictData,
 } from '@vben/micro-apps';
 
+import { createDemoIotBridge } from './demo-iot';
+
 interface DemoBridgeOptions {
   delay?: number;
   fail?: boolean;
@@ -56,6 +58,7 @@ export function createDemoBridge(options: DemoBridgeOptions): DataCenterBridge {
   }
 
   return {
+    iot: createDemoIotBridge(options.tenantId, options.signal, read),
     getDepartments: (signal) => read(departments, signal),
     getDictionaries: (signal) => read(dictionaries, signal),
   };

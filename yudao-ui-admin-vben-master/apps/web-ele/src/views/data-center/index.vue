@@ -4,6 +4,7 @@ import type {
   DataCenterDept,
   DataCenterDictData,
   DataCenterProps,
+  IotBridge,
 } from '@vben/micro-apps';
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -13,6 +14,7 @@ import { Page } from '@vben/common-ui';
 import {
   createMicroAppController,
   normalizeDataCenterRoute,
+  normalizeIotError,
 } from '@vben/micro-apps';
 import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
@@ -46,11 +48,14 @@ function sessionKey() {
   ]);
 }
 
-/** 将请求限制为已约定的只读接口；令牌和租户头仍由原 requestClient 处理。 */
+/** Only bridge-owned paths/methods are exposed; original auth and tenant interceptors remain in control. */
 async function read<T>(
   path: string,
   signal: AbortSignal,
   session: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+  data?: unknown,
+  blob = false,
 ): Promise<T> {
   if (
     !accessStore.accessToken ||
@@ -66,14 +71,85 @@ async function read<T>(
   signal.addEventListener('abort', cancel, { once: true });
   lifetimeSignal.addEventListener('abort', cancel, { once: true });
   try {
-    const result = await requestClient.get<T>(path, { signal: abort.signal });
+    const result = await requestClient.request<T>(path, {
+      method,
+      data,
+      signal: abort.signal,
+      ...(blob
+        ? { responseType: 'blob' as const, responseReturn: 'body' as const }
+        : {}),
+    });
     if (abort.signal.aborted || session !== sessionKey())
       throw new DOMException('会话已切换', 'AbortError');
     return result;
+  } catch (cause) {
+    throw normalizeIotError(cause);
   } finally {
     signal.removeEventListener('abort', cancel);
     lifetimeSignal.removeEventListener('abort', cancel);
   }
+}
+
+function createIotBridge(session: string): IotBridge {
+  const id = (value: number | string) => encodeURIComponent(String(value));
+  return {
+    devices: (signal) => read('/iot/devices', signal, session),
+    createDevice: (value, signal) =>
+      read('/iot/devices', signal, session, 'POST', value),
+    mappings: (deviceId, signal) =>
+      read(`/iot/devices/${id(deviceId)}/mappings`, signal, session),
+    saveMappings: (deviceId, value, signal) =>
+      read(
+        `/iot/devices/${id(deviceId)}/mappings`,
+        signal,
+        session,
+        'PUT',
+        value,
+      ),
+    dashboards: (signal) => read('/iot/dashboards', signal, session),
+    dashboard: (dashboardId, signal) =>
+      read(`/iot/dashboards/${id(dashboardId)}`, signal, session),
+    saveDashboard: (value, signal) =>
+      read(
+        value.id ? `/iot/dashboards/${id(value.id)}` : '/iot/dashboards',
+        signal,
+        session,
+        value.id ? 'PUT' : 'POST',
+        value,
+      ),
+    deleteDashboard: (dashboardId, version, signal) =>
+      read(
+        `/iot/dashboards/${id(dashboardId)}?version=${id(version)}`,
+        signal,
+        session,
+        'DELETE',
+      ),
+    templates: (signal) => read('/iot/templates', signal, session),
+    createTemplate: (value, signal) =>
+      read('/iot/templates', signal, session, 'POST', value),
+    query: (mode, value, signal) =>
+      read(
+        mode === 'history' ? '/iot/query/history' : '/iot/query/realtime',
+        signal,
+        session,
+        'POST',
+        value,
+      ),
+    exports: (signal) => read('/iot/exports', signal, session),
+    createExport: (value, signal) =>
+      read('/iot/exports', signal, session, 'POST', value),
+    cancelExport: (exportId, signal) =>
+      read(`/iot/exports/${id(exportId)}/cancel`, signal, session, 'POST'),
+    downloadExport: (exportId, signal) =>
+      read(
+        `/iot/exports/${id(exportId)}/file`,
+        signal,
+        session,
+        'GET',
+        undefined,
+        true,
+      ),
+  };
 }
 
 function props(): DataCenterProps {
@@ -81,6 +157,7 @@ function props(): DataCenterProps {
   if (!bridge || bridgeSession !== session) {
     bridgeSession = session;
     bridge = {
+      iot: createIotBridge(session),
       getDepartments: (signal) =>
         read<DataCenterDept[]>('/system/dept/simple-list', signal, session),
       getDictionaries: (signal) =>
@@ -210,7 +287,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Page title="数据中心" description="统一查看当前租户的部门目录与数据字典。">
+  <Page>
     <ElAlert
       v-if="loading"
       title="正在加载数据中心…"

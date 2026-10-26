@@ -15,6 +15,7 @@ import { normalizeDataCenterRoute } from '@vben/micro-apps';
 import App from './app.vue';
 import { dataCenterKey } from './context';
 import Workbench from './views/workbench.vue';
+import IotWorkbench from './iot/workbench.vue';
 
 let app: VueApp | undefined;
 let router: Router | undefined;
@@ -37,6 +38,9 @@ export async function mount(props: DataCenterProps = {}) {
     routes: [
       { path: '/', redirect: '/overview' },
       { path: '/overview', component: Workbench },
+      ...['/devices', '/dashboards', '/widgets', '/history', '/downloads'].map(
+        (path) => ({ path, component: IotWorkbench }),
+      ),
       { path: '/departments', component: Workbench },
       { path: '/dictionaries', component: Workbench },
       { path: '/:pathMatch(.*)*', redirect: '/overview' },

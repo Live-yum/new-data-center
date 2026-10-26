@@ -37,10 +37,30 @@ jobs:
         run: pnpm check:micro
       - name: Build the real child app and demo host
         run: pnpm build:micro-demo
-      - name: Install Playwright Chromium and system dependencies
+      - name: Verify runner Chrome and Chinese screenshot fonts
+        timeout-minutes: 5
         run: |
-          pnpm exec playwright install --with-deps chromium
-          sudo apt-get install --no-install-recommends --yes fonts-noto-cjk
+          mkdir -p "$RUNNER_TEMP/micro-demo-artifacts"
+          # The hosted runner already ships Chrome and its runtime dependencies.
+          # Avoid upgrading unrelated system libraries or downloading a second browser.
+          chrome="$(command -v google-chrome || command -v google-chrome-stable)"
+          test -x "$chrome"
+          version="$("$chrome" --version)"
+          major="$(printf '%s' "$version" | grep -oE '[0-9]+' | head -1)"
+          test "$major" -ge 133
+          printf 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=%s\n' "$chrome" >> "$GITHUB_ENV"
+          printf '%s\n%s\n' "$chrome" "$version" | tee "$RUNNER_TEMP/micro-demo-artifacts/browser-environment.log"
+          # The previous run exhausted 25 minutes downloading the 61 MB Noto CJK
+          # package. Require real Chinese glyph coverage, using the smaller WQY
+          # package only when the image does not already contain a Chinese font.
+          if [[ -z "$(fc-list :lang=zh-cn file)" ]]; then
+            timeout 180s sudo apt-get --no-install-recommends --yes \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 install fonts-wqy-zenhei
+            fc-cache -f
+          fi
+          test -n "$(fc-list :lang=zh-cn file)"
+          fc-match -f '%{family}\n' 'sans:lang=zh-cn' | tee -a "$RUNNER_TEMP/micro-demo-artifacts/browser-environment.log"
       - name: Run browser regressions against built preview and capture screenshots
         env:
           MICRO_DEMO_SCREENSHOT_DIR: ${{ runner.temp }}/micro-demo-artifacts
@@ -71,6 +91,10 @@ jobs:
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/micro-demo-desktop.png"
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/micro-demo-mobile.png"
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/verification.json"
+          node scripts/test-iot-demo.mjs 2>&1 | tee "$MICRO_DEMO_SCREENSHOT_DIR/iot-browser-test.log"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-demo-desktop.png"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-demo-mobile.png"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-verification.json"
       - name: Upload screenshots and preview diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -99,6 +123,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     defaults:
       run:
         working-directory: yudao-cloud-mini-master-jdk17
@@ -172,6 +205,75 @@ jobs:
           DATABASE_TEST_USERNAME: yudao_test
           DATABASE_TEST_PASSWORD: ci_ephemeral_password
         run: mvn --batch-mode --no-transfer-progress -pl yudao-server -am test
+      - name: Package the standalone IoT service and run its PostgreSQL regressions
+        env:
+          DATABASE_TEST_URL: jdbc:postgresql://127.0.0.1:5432/yudao_test
+          DATABASE_TEST_USERNAME: yudao_test
+          DATABASE_TEST_PASSWORD: ci_ephemeral_password
+        run: |
+          mkdir -p "$RUNNER_TEMP/iot-service-artifacts"
+          mvn --batch-mode --no-transfer-progress -pl yudao-module-iot -am verify 2>&1 | tee "$RUNNER_TEMP/iot-service-artifacts/maven.log"
+          test -s yudao-module-iot/target/yudao-module-iot-exec.jar
+      - name: Launch the packaged IoT process and verify its real HTTP security boundary
+        env:
+          DB_HOST: 127.0.0.1
+          DB_NAME: yudao_test
+          DB_USERNAME: yudao_test
+          DB_PASSWORD: ci_ephemeral_password
+          IOT_SERVER_PORT: 48083
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+          REALDB_ENABLED: "false"
+        run: |
+          mkdir -p "$RUNNER_TEMP/iot-service-artifacts"
+          java -jar yudao-module-iot/target/yudao-module-iot-exec.jar > "$RUNNER_TEMP/iot-service-artifacts/service.log" 2>&1 &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          export IOT_TEST_PID="$service_pid"
+          python3 - <<'PYHTTP'
+          import json, os, time
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          base = 'http://127.0.0.1:48083/admin-api/iot/devices'
+          def request(headers=None):
+              try:
+                  response = urlopen(Request(base, headers=headers or {}), timeout=5)
+              except HTTPError as error:
+                  response = error
+              with response:
+                  return response.status, json.loads(response.read())
+
+          deadline = time.monotonic() + 90
+          while True:
+              try:
+                  os.kill(int(os.environ['IOT_TEST_PID']), 0)
+              except ProcessLookupError:
+                  print(Path(os.environ['RUNNER_TEMP'], 'iot-service-artifacts', 'service.log').read_text())
+                  raise RuntimeError('Packaged IoT service exited before accepting HTTP')
+              try:
+                  status, body = request()
+                  break
+              except (URLError, TimeoutError):
+                  if time.monotonic() >= deadline:
+                      print(Path(os.environ['RUNNER_TEMP'], 'iot-service-artifacts', 'service.log').read_text())
+                      raise RuntimeError('Packaged IoT service did not accept HTTP within 90 seconds')
+                  time.sleep(1)
+          # A real security denial is required, not a 404, startup 500 or stub response.
+          assert status in (200, 401), (status, body)
+          assert body.get('code') == 401, (status, body)
+          checks = [{'case': 'unauthenticated', 'httpStatus': status, 'code': body['code']}]
+          forged = quote(json.dumps({'id': 1, 'userType': 2, 'tenantId': 1}, separators=(',', ':')))
+          status, body = request({'login-user': forged, 'tenant-id': '1'})
+          assert status in (200, 401), (status, body)
+          assert body.get('code') == 401, (status, body)
+          checks.append({'case': 'forged-login-user', 'httpStatus': status, 'code': body['code']})
+          output = {'checks': checks, 'note': 'Real executable / HTTP boundary; authenticated system RPC and live RealDB are not emulated by this check.'}
+          Path(os.environ['RUNNER_TEMP'], 'iot-service-artifacts', 'http-verification.json').write_text(json.dumps(output, indent=2) + '\n')
+          print(json.dumps(output, indent=2))
+          PYHTTP
       - name: Summarize Surefire and require non-skipped database tests
         if: always()
         run: |
@@ -184,6 +286,7 @@ jobs:
           required = {
               'cn.iocoder.yudao.framework.mybatis.DatabaseCompatibilityTest',
               'cn.iocoder.yudao.module.system.dal.mysql.BooleanColumnDatabaseTest',
+              'cn.iocoder.yudao.module.iot.IotPostgresqlTest',
           }
           verified = set()
           totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
@@ -206,7 +309,7 @@ jobs:
               *rows,
               '| **Total** | ' + ' | '.join(str(totals[key]) for key in totals) + ' |',
               '',
-              'The two external database regressions must execute against the disposable PostgreSQL service.',
+              'All required external database regressions must execute against the disposable PostgreSQL service.',
               'This job does not validate a KingbaseES server or connect the frontend demo to a database.',
           ]) + '\n'
           print(summary)
@@ -225,5 +328,13 @@ jobs:
         with:
           name: java-postgresql-tests-${{ github.sha }}
           path: yudao-cloud-mini-master-jdk17/**/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload standalone IoT process and HTTP diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iot-service-${{ github.sha }}
+          path: ${{ runner.temp }}/iot-service-artifacts/
           if-no-files-found: warn
           retention-days: 7

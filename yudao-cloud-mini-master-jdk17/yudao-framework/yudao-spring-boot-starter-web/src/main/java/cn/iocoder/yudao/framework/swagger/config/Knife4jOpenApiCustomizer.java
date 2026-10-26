@@ -13,6 +13,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.springdoc.core.customizers.GlobalOpenApiCustomizer;
 import org.springdoc.core.properties.SpringDocConfigProperties;
 import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -35,6 +36,7 @@ import java.util.stream.Collectors;
  */
 @Primary
 @Configuration
+@ConditionalOnProperty(prefix = "knife4j", name = "enable", havingValue = "true")
 @Slf4j
 public class Knife4jOpenApiCustomizer extends com.github.xiaoymin.knife4j.spring.extension.Knife4jOpenApiCustomizer
         implements GlobalOpenApiCustomizer {

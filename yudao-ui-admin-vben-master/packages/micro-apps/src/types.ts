@@ -1,3 +1,4 @@
+import type { IotBridge } from './iot';
 /** 主应用只传递显示信息和受控接口，不向子应用分发访问/刷新令牌。 */
 export interface DataCenterContext {
   dataSource?: 'demo' | 'platform';
@@ -22,6 +23,7 @@ export interface DataCenterDictData {
 
 /** 保持原后台请求拦截器、租户隔离和后端权限校验的统一入口。 */
 export interface DataCenterBridge {
+  iot?: IotBridge;
   getDepartments: (signal: AbortSignal) => Promise<DataCenterDept[]>;
   getDictionaries: (signal: AbortSignal) => Promise<DataCenterDictData[]>;
 }
@@ -36,6 +38,11 @@ export type DataCenterProps = {
 
 const dataCenterRoutes = new Set([
   '/overview',
+  '/devices',
+  '/dashboards',
+  '/widgets',
+  '/history',
+  '/downloads',
   '/departments',
   '/dictionaries',
 ]);

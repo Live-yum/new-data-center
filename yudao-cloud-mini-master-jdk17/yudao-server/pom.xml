@@ -21,6 +21,7 @@
     <url>https://github.com/YunaiV/ruoyi-vue-pro</url>
 
     <dependencies>
+        <dependency><groupId>cn.iocoder.cloud</groupId><artifactId>yudao-module-iot</artifactId><version>${revision}</version></dependency>
         <!-- 独立的紫金桥实时库客户端，默认禁用，按需配置 yudao.realdb -->
         <dependency>
             <groupId>cn.iocoder.cloud</groupId>

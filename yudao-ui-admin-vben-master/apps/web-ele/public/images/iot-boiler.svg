@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="360" viewBox="0 0 500 360" role="img" aria-label="锅炉设备示意图">
+<rect width="500" height="360" fill="#ffffff"/><path d="M30 180h145m150 0h145" stroke="#b4c8d2" stroke-width="15"/>
+<rect x="175" y="65" width="150" height="225" rx="34" fill="#edf5f7" stroke="#9fbac8" stroke-width="3"/>
+<rect x="197" y="95" width="106" height="156" rx="22" fill="#d5e9ee"/><path d="M215 120h70m-70 25h70m-70 25h70m-70 25h70m-70 25h70" stroke="#94b7c5" stroke-width="6"/>
+<path d="M205 290v30m90-30v30" stroke="#9fbac8" stroke-width="10"/><circle cx="175" cy="180" r="10" fill="white" stroke="#07858b" stroke-width="3"/><circle cx="325" cy="180" r="10" fill="white" stroke="#07858b" stroke-width="3"/>
+<text x="250" y="346" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#7891a1">只读设备示意图 · 非控制面板</text></svg>

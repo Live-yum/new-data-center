@@ -70,6 +70,12 @@ export interface IotExport {
   error?: string;
 }
 export interface IotBridge {
+  /** Optional read-only demonstration capability. Never provided by the production bridge. */
+  demoOilgasQuery?: (
+    mode: 'realtime' | 'history',
+    query: IotQuery,
+    signal: AbortSignal,
+  ) => Promise<IotResult>;
   devices(signal: AbortSignal): Promise<IotDevice[]>;
   createDevice(
     device: { name: string; code: string },
@@ -92,7 +98,10 @@ export interface IotBridge {
     version: number,
     signal: AbortSignal,
   ): Promise<unknown>;
-  createTemplate(value: IotDashboard, signal: AbortSignal): Promise<IotDashboard>;
+  createTemplate(
+    value: IotDashboard,
+    signal: AbortSignal,
+  ): Promise<IotDashboard>;
   templates(signal: AbortSignal): Promise<IotDashboard[]>;
   query(
     mode: 'realtime' | 'history',

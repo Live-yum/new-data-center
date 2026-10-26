@@ -16,6 +16,7 @@ import App from './app.vue';
 import { dataCenterKey } from './context';
 import Workbench from './views/workbench.vue';
 import IotWorkbench from './iot/workbench.vue';
+import OilgasDemo from './iot/OilgasDemo.vue';
 
 let app: VueApp | undefined;
 let router: Router | undefined;
@@ -40,6 +41,9 @@ export async function mount(props: DataCenterProps = {}) {
       { path: '/overview', component: Workbench },
       ...['/devices', '/dashboards', '/widgets', '/history', '/downloads'].map(
         (path) => ({ path, component: IotWorkbench }),
+      ),
+      ...['separation', 'gas', 'storage', 'utilities', 'offshore'].map(
+        (id) => ({ path: `/demo-${id}`, component: OilgasDemo }),
       ),
       { path: '/departments', component: Workbench },
       { path: '/dictionaries', component: Workbench },

@@ -23,7 +23,11 @@ const state = inject(dataCenterKey);
       >
     </header>
     <nav class="dc-global-nav dc-nav" aria-label="工作台导航">
-      <RouterLink to="/dashboards">设备看板</RouterLink
+      <RouterLink
+        v-if="state?.props.context?.dataSource === 'demo'"
+        to="/demo-separation"
+        >油气演示</RouterLink
+      ><RouterLink to="/dashboards">设备看板</RouterLink
       ><RouterLink to="/devices">设备与测点</RouterLink
       ><RouterLink to="/widgets">组件中心</RouterLink
       ><RouterLink to="/history">历史查询</RouterLink

@@ -38,6 +38,11 @@ export type DataCenterProps = {
 
 const dataCenterRoutes = new Set([
   '/overview',
+  '/demo-separation',
+  '/demo-gas',
+  '/demo-storage',
+  '/demo-utilities',
+  '/demo-offshore',
   '/devices',
   '/dashboards',
   '/widgets',

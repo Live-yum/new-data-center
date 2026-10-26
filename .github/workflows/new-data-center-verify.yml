@@ -95,6 +95,12 @@ jobs:
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-demo-desktop.png"
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-demo-mobile.png"
           test -s "$MICRO_DEMO_SCREENSHOT_DIR/iot-verification.json"
+          node scripts/test-oilgas-demo.mjs 2>&1 | tee "$MICRO_DEMO_SCREENSHOT_DIR/oilgas-browser-test.log"
+          for scene in separation gas storage utilities offshore; do
+            test -s "$MICRO_DEMO_SCREENSHOT_DIR/oilgas-$scene-desktop.png"
+          done
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/oilgas-separation-mobile.png"
+          test -s "$MICRO_DEMO_SCREENSHOT_DIR/oilgas-verification.json"
       - name: Upload screenshots and preview diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

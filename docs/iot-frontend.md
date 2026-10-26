@@ -57,11 +57,11 @@ pnpm exec vitest run apps/web-data-center/src/iot apps/web-micro-demo/src/demo-i
 
 | 页面 | 宿主地址（开发/预览） | 示例设备 |
 | --- | --- | --- |
-| 陆地油气水分离 | `http://127.0.0.1:5174/data-center?view=demo-separation` | 缓冲罐、三相分离器、转输泵 |
-| 天然气处理 | `http://127.0.0.1:5174/data-center?view=demo-gas` | 分离器、脱水塔、压缩机 |
-| 储罐外输 | `http://127.0.0.1:5174/data-center?view=demo-storage` | 储罐、外输泵 |
-| 泵站公用工程 | `http://127.0.0.1:5174/data-center?view=demo-utilities` | 循环水泵、缓冲罐、空压机 |
-| 海上平台总览 | `http://127.0.0.1:5174/data-center?view=demo-offshore` | 平台分离、压缩、输送模块 |
+| 陆地油气水分离 | `http://127.0.0.1:5174/#/data-center?view=demo-separation` | 缓冲罐、三相分离器、转输泵 |
+| 天然气处理 | `http://127.0.0.1:5174/#/data-center?view=demo-gas` | 分离器、脱水塔、压缩机 |
+| 储罐外输 | `http://127.0.0.1:5174/#/data-center?view=demo-storage` | 储罐、外输泵 |
+| 泵站公用工程 | `http://127.0.0.1:5174/#/data-center?view=demo-utilities` | 循环水泵、缓冲罐、空压机 |
+| 海上平台总览 | `http://127.0.0.1:5174/#/data-center?view=demo-offshore` | 平台分离、压缩、输送模块 |
 
 手机端工艺图保留900px可读宽度，在独立容器内左右滑动，页面自身不横向溢出；从设备下拉框切换时图内自动定位，桌面保持完整图。
 

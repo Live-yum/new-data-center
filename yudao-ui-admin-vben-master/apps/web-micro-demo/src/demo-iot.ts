@@ -1,3 +1,4 @@
+import { oilgasScenes } from '@vben/micro-apps';
 import type {
   IotBridge,
   IotDashboard,
@@ -8,6 +9,30 @@ import type {
   IotResult,
   IotWidget,
 } from '@vben/micro-apps';
+
+function oilgasScene(deviceId: number) {
+  return oilgasScenes.find((scene) =>
+    scene.devices.some((device) => device.id === deviceId),
+  );
+}
+function oilgasMappings(deviceId: number): IotMapping[] | undefined {
+  const scene = oilgasScene(deviceId);
+  const device = scene?.devices.find((item) => item.id === deviceId);
+  return scene && device
+    ? scene.metrics
+        .filter(
+          (m) =>
+            !device.availableMetrics ||
+            device.availableMetrics.includes(m.metricKey),
+        )
+        .map(({ metricKey, name, unit }) => ({
+          metricKey,
+          name,
+          unit: metricKey === 'flow' ? (device.flowUnit ?? unit) : unit,
+          pointName: `DEMO.${device.code}.${metricKey}`,
+        }))
+    : undefined;
+}
 
 // Match JSON transport semantics, including Vue reactive input objects.
 function jsonClone<T>(value: T): T {
@@ -202,6 +227,7 @@ export function createDemoIotBridge(
     store: Store,
     mode: 'history' | 'realtime',
     q: IotQuery,
+    demoOilgas = false,
   ): IotResult {
     if (
       !q.deviceIds.length ||
@@ -246,33 +272,58 @@ export function createDemoIotBridge(
       source: 'DEMO',
       series: q.deviceIds.flatMap((deviceId) =>
         q.metricKeys.map((metricKey) => {
-          const mapping = store.mappings[deviceId]?.find(
-            (m) => m.metricKey === metricKey,
+          const scene = demoOilgas ? oilgasScene(deviceId) : undefined;
+          const device = scene?.devices.find((item) => item.id === deviceId);
+          const originalDefinition = scene?.metrics.find(
+            (item) => item.metricKey === metricKey,
           );
+          const definition =
+            originalDefinition && metricKey === 'flow' && device?.flowBase
+              ? {
+                  ...originalDefinition,
+                  base: device.flowBase,
+                  amplitude: device.flowBase * 0.06,
+                }
+              : originalDefinition;
+          const mapping = (
+            demoOilgas ? oilgasMappings(deviceId) : store.mappings[deviceId]
+          )?.find((m) => m.metricKey === metricKey);
           if (!mapping) throw new Error('设备未配置请求的统一指标映射');
           const points = Array.from({ length: count }, (_, index) => {
             const time =
               mode === 'realtime' ? end : start + index * q.intervalMs!;
             const missing =
-              count > 5 && index === Math.floor(count / 2) && deviceId === 2;
+              count > 5 &&
+              index === Math.floor(count / 2) &&
+              (deviceId === 2 || deviceId === scene?.devices[1]?.id);
             const value = missing
               ? null
               : metricKey === 'running_state'
-                ? index % 12 < 9
+                ? (scene ? Math.floor(time / 300_000) + deviceId : index) % 12 <
+                  9
                   ? '运行'
                   : '待机'
-                : Number(
-                    (
-                      (metricKey === 'pressure_steam'
-                        ? 0.8
-                        : metricKey === 'flow_rate'
-                          ? 12
-                          : 82) +
-                      Math.sin(time / 120_000 + deviceId) *
-                        (metricKey === 'pressure_steam' ? 0.08 : 4) +
-                      deviceId * (metricKey === 'pressure_steam' ? 0.01 : 0.8)
-                    ).toFixed(2),
-                  );
+                : definition
+                  ? Number(
+                      (
+                        definition.base +
+                        Math.sin(time / 120_000 + deviceId) *
+                          definition.amplitude +
+                        (((deviceId % 10) - 1) * definition.amplitude) / 3
+                      ).toFixed(2),
+                    )
+                  : Number(
+                      (
+                        (metricKey === 'pressure_steam'
+                          ? 0.8
+                          : metricKey === 'flow_rate'
+                            ? 12
+                            : 82) +
+                        Math.sin(time / 120_000 + deviceId) *
+                          (metricKey === 'pressure_steam' ? 0.08 : 4) +
+                        deviceId * (metricKey === 'pressure_steam' ? 0.01 : 0.8)
+                      ).toFixed(2),
+                    );
             return {
               time: new Date(time).toISOString(),
               value,
@@ -328,7 +379,7 @@ export function createDemoIotBridge(
         },
         true,
       ),
-    mappings: (id, s) => run(s, (d) => d.mappings[id] || []),
+    mappings: (id, s) => run(s, (d) => d.mappings[id] ?? []),
     saveMappings: (id, mappings, s) =>
       run(
         s,
@@ -407,6 +458,7 @@ export function createDemoIotBridge(
         true,
       ),
     query: (mode, q, s) => run(s, (d) => query(d, mode, q)),
+    demoOilgasQuery: (mode, q, s) => run(s, (d) => query(d, mode, q, true)),
     exports: (s) =>
       run(
         s,

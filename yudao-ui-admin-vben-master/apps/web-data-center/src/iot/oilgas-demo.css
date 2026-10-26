@@ -1,0 +1,372 @@
+.dc-shell .og-workspace {
+  color: #203c51;
+  font-size: 13px;
+}
+.dc-shell .og-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.dc-shell .og-toolbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.dc-shell .og-toolbar a {
+  padding: 9px 14px;
+  border: 1px solid #d5e2e8;
+  border-radius: 6px;
+  color: #527082;
+  text-decoration: none;
+  background: #fff;
+}
+.dc-shell .og-toolbar a.router-link-active {
+  color: white;
+  background: #164657;
+  border-color: #164657;
+}
+.dc-shell .og-demo-badge {
+  flex-shrink: 0;
+  color: #927025;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  background: #fff3d9;
+  padding: 6px 10px;
+  border-radius: 5px;
+}
+.dc-shell .og-context {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  color: #6d8493;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+.dc-shell .og-context > span:last-child {
+  white-space: nowrap;
+}
+.dc-shell .og-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #28b39f;
+  margin-left: 5px;
+}
+.dc-shell .og-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 252px;
+  gap: 16px;
+}
+.dc-shell .og-flow-panel {
+  overflow: hidden;
+  border: 1px solid #25465a;
+  background: #102b3d;
+  border-radius: 10px;
+  color: #d8edf4;
+}
+.dc-shell .og-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 10px;
+}
+.dc-shell .og-panel-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.dc-shell .og-panel-heading small {
+  margin-left: 8px;
+  font-weight: 400;
+  color: #8ca2af;
+  font-size: 10px;
+}
+.dc-shell .og-panel-heading > span {
+  font-size: 11px;
+  color: #8ca2af;
+}
+.dc-shell .og-process {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+}
+.dc-shell .og-equipment {
+  cursor: pointer;
+  outline: none;
+}
+.dc-shell .og-equipment:focus > rect:first-child {
+  stroke: #fff;
+  stroke-width: 3;
+}
+.dc-shell .og-flow-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 18px;
+  border-top: 1px solid #284354;
+  color: #92acbc;
+  font-size: 10px;
+}
+.dc-shell .og-flow-footer i {
+  display: inline-block;
+  width: 16px;
+  border-top: 2px solid #41c4ba;
+  margin-right: 5px;
+}
+.dc-shell .og-flow-footer .og-gas {
+  border-top: 2px dashed #5f91af;
+  margin-left: 12px;
+}
+.dc-shell .og-device-panel,
+.dc-shell .og-trend-panel,
+.dc-shell .og-samples-panel {
+  background: #fff;
+  border: 1px solid #dce5eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.dc-shell .og-device-select {
+  display: block;
+  padding: 0 18px;
+  color: #8496a2;
+  font-size: 11px;
+}
+.dc-shell .og-workspace select {
+  max-width: 100%;
+  padding: 6px;
+  border: 1px solid #d3e0e6;
+  border-radius: 5px;
+  color: #365569;
+  background: white;
+  font: inherit;
+}
+.dc-shell .og-device-select select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.dc-shell .og-device-identity {
+  display: flex;
+  flex-direction: column;
+  padding: 15px 18px 11px;
+  gap: 2px;
+}
+.dc-shell .og-device-identity > span {
+  color: #248d86;
+  letter-spacing: 1px;
+  font-size: 10px;
+}
+.dc-shell .og-device-identity strong {
+  font-size: 18px;
+}
+.dc-shell .og-device-identity small {
+  color: #879ba7;
+  font-size: 10px;
+}
+.dc-shell .og-reading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 18px;
+  padding: 10px 0;
+  border-top: 1px solid #edf1f4;
+}
+.dc-shell .og-reading > span {
+  color: #718994;
+  font-size: 12px;
+}
+.dc-shell .og-reading strong {
+  color: #1c5e65;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.dc-shell .og-reading small {
+  font-size: 10px;
+  font-weight: 400;
+  color: #7b939c;
+}
+.dc-shell .og-timestamp {
+  padding: 4px 18px 13px;
+  color: #8b9ca7;
+  font-size: 10px;
+}
+.dc-shell .og-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(290px, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.dc-shell .og-trend-panel .iot-widget-view {
+  padding: 0 18px 12px;
+}
+.dc-shell .og-trend-panel .iot-widget-title {
+  font-size: 11px;
+  color: #607b8c;
+  font-weight: 400;
+  margin: 3px 0;
+}
+.dc-shell .og-trend-panel .iot-chart-series svg {
+  height: 155px;
+  width: 100%;
+}
+.dc-shell .og-trend-panel .iot-series-label {
+  font-size: 10px;
+}
+.dc-shell .og-samples-panel table {
+  width: calc(100% - 36px);
+  margin: 8px 18px;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dc-shell .og-samples-panel th {
+  color: #91a2ae;
+  font-weight: 400;
+  font-size: 10px;
+}
+.dc-shell .og-samples-panel td {
+  border-bottom: 1px solid #eff3f5;
+  padding: 10px 0;
+}
+.dc-shell .og-quality {
+  color: #248e82;
+  background: #eaf7f3;
+  font-size: 9px;
+  padding: 3px 5px;
+  border-radius: 3px;
+}
+.dc-shell .og-samples-panel p {
+  color: #9aabb6;
+  font-size: 10px;
+  padding: 6px 18px 14px;
+}
+.dc-shell .og-disclaimer {
+  margin-top: 14px;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: #889aa6;
+  background: #edf2f6;
+  border-radius: 6px;
+}
+.dc-shell .og-disclaimer strong {
+  font-weight: 600;
+  margin-right: 8px;
+  color: #617f91;
+}
+@media (max-width: 1100px) {
+  .dc-shell .og-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dc-shell .og-device-panel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .dc-shell .og-device-panel .og-panel-heading {
+    grid-column: 1/-1;
+  }
+  .dc-shell .og-device-select,
+  .dc-shell .og-device-identity {
+    grid-column: span 1;
+  }
+  .dc-shell .og-reading {
+    margin: 0 12px;
+  }
+  .dc-shell .og-device-identity {
+    padding-top: 0;
+  }
+  .dc-shell .og-timestamp {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 700px) {
+  .dc-shell .og-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .dc-shell .og-toolbar a {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+  .dc-shell .og-context {
+    flex-direction: column;
+    gap: 5px;
+  }
+  .dc-shell .og-main-grid,
+  .dc-shell .og-bottom-grid {
+    display: block;
+  }
+  .dc-shell .og-device-panel,
+  .dc-shell .og-samples-panel {
+    margin-top: 12px;
+  }
+  .dc-shell .og-device-panel {
+    display: block;
+  }
+  .dc-shell .og-device-identity {
+    padding-top: 12px;
+  }
+  .dc-shell .og-process {
+    min-height: 0;
+  }
+  .dc-shell .og-panel-heading {
+    padding: 12px;
+  }
+  .dc-shell .og-panel-heading small {
+    display: block;
+    margin: 3px 0 0;
+  }
+  .dc-shell .og-flow-footer {
+    font-size: 9px;
+    padding: 8px;
+  }
+  .dc-shell .og-panel-heading > span {
+    font-size: 9px;
+  }
+  .dc-shell .og-trend-panel .iot-chart-series svg {
+    height: auto;
+  }
+}
+
+.dc-shell .og-workspace {
+  padding: 16px;
+  background: #f3f7fa;
+}
+.dc-shell .og-workspace * {
+  box-sizing: border-box;
+}
+@media (max-width: 700px) {
+  .dc-shell .og-workspace {
+    padding: 8px;
+  }
+}
+
+.dc-shell .og-diagram-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.dc-shell .og-pan-hint {
+  display: none;
+}
+@media (max-width: 700px) {
+  .dc-shell .og-diagram-scroll .og-process {
+    width: 900px;
+    min-width: 900px;
+    max-width: none;
+  }
+  .dc-shell .og-pan-hint {
+    display: block;
+    margin: 0;
+    padding: 2px 12px 10px;
+    color: #a9c7d6;
+    font-size: 11px;
+  }
+}

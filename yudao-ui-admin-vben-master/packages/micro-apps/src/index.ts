@@ -10,3 +10,6 @@ export type {
 export type * from './iot';
 
 export { normalizeIotError } from './iot-errors';
+
+export { oilgasScenes } from './oilgas-demo';
+export type { OilgasScene, OilgasDevice, OilgasMetric } from './oilgas-demo';

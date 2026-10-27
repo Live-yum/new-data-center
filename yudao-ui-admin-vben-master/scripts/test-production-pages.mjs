@@ -669,15 +669,41 @@ try {
       await selector.waitFor();
       await until(async () => !(await selector.isDisabled()), 'tenant source catalog loaded');
       assert.equal(await selector.inputValue(), '', 'Never auto-select the first configured source');
-      assert.equal(await page.getByTestId('iot-device-create').isDisabled(), true);
-      assert.equal(await selector.locator('option[value="source-disabled"]').isDisabled(), true);
+      const createButton = page.getByTestId('iot-device-create');
+      assert.equal(await createButton.isDisabled(), true);
+      const disabledOption = selector.locator('option[value="source-disabled"]');
+      // Playwright 1.64 retargets option.isDisabled() through the enclosing
+      // label to its enabled SELECT. Inspect the actual OPTION, not that control.
+      assert.deepEqual(await disabledOption.evaluate((option) => ({
+        tag: option.tagName, disabled: option.disabled,
+        attribute: option.hasAttribute('disabled'), nativeState: option.matches(':disabled'),
+        selected: option.selected,
+      })), { tag: 'OPTION', disabled: true, attribute: true, nativeState: true, selected: false });
+      assert.match(await disabledOption.innerText(), /source-disabled.*未启用/);
+      // Even a programmatic assignment bypassing native option selection must
+      // not enable creation or issue a mutation with a disabled source.
+      await page.getByLabel('设备名称', { exact: true }).fill('浏览器独立源设备（非现场）');
+      await page.getByLabel('设备编码', { exact: true }).fill('browser_source_b_fixture');
+      const priorIds = (await api('/devices')).map((device) => device.id);
+      const createRequests = () => requests.filter((request) => request.method === 'POST' && request.path === '/admin-api/iot/devices').length;
+      const priorCreates = createRequests();
+      await selector.evaluate((select) => {
+        select.value = 'source-disabled';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      assert.equal(await selector.inputValue(), 'source-disabled');
+      assert.equal(await createButton.isDisabled(), true);
+      await createButton.evaluate((button) => button.click());
+      assert.deepEqual((await api('/devices')).map((device) => device.id), priorIds);
+      assert.equal(createRequests(), priorCreates, 'Disabled source must never submit a device mutation');
+      await selector.selectOption('');
+      assert.equal(await selector.inputValue(), '');
+      assert.equal(await createButton.isDisabled(), true);
       for (const [device, source] of [[devices[0], 'source-a'], [peer, 'source-b']]) {
         const row = page.locator(`.iot-device-row[data-device-id="${device.id}"]`);
         assert.ok((await row.innerText()).includes(device.name));
         assert.ok((await row.innerText()).includes(`[${source}]`));
       }
-      await page.getByLabel('设备名称', { exact: true }).fill('浏览器独立源设备（非现场）');
-      await page.getByLabel('设备编码', { exact: true }).fill('browser_source_b_fixture');
       await selector.selectOption('source-b');
       await page.getByTestId('iot-device-create').click();
       let created;

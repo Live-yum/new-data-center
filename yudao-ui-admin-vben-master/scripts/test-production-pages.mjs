@@ -69,6 +69,11 @@ context.on('request', (request) => {
     });
 });
 const root = () => page.getByTestId('production-scenes');
+// Intentional global navigation: production pages also expose same-named quick links.
+const navLink = (name) =>
+  page
+    .getByRole('navigation', { name: '工作台导航', exact: true })
+    .getByRole('link', { name, exact: true });
 const point = (metric = 'pressure') =>
   page
     .getByTestId('production-live')
@@ -288,15 +293,13 @@ try {
       await ready('utilities');
       await page.goForward();
       await ready('offshore');
-      await page
-        .getByRole('link', { name: '紫金桥数据源', exact: true })
-        .click();
+      await navLink('紫金桥数据源').click();
       await page.getByTestId('production-sources').waitFor();
       assert.match(
         await page.getByTestId('production-sources').innerText(),
         /配置完整不等于网络连通/,
       );
-      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await navLink('生产工艺').click();
       await ready('separation');
     },
   );
@@ -431,10 +434,7 @@ try {
         'actual export worker',
         30_000,
       );
-      await page
-        .getByRole('link', { name: '下载任务', exact: true })
-        .first()
-        .click();
+      await navLink('下载任务').click();
       const row = page.getByTestId(`iot-export-${job.id}`);
       await row.waitFor();
       const downloadPromise = page.waitForEvent('download');
@@ -446,7 +446,7 @@ try {
       assert.match(csv, /MPa|°C/);
       assert.match(csv, /GOOD|MISSING/);
       assert.ok(csv.split('\n').length > 10);
-      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await navLink('生产工艺').click();
       await ready('separation');
     },
   );
@@ -664,7 +664,7 @@ try {
   await check(
     'Explicit source selection creates and persists the intended device binding; equal names remain distinguishable',
     async () => {
-      await page.getByRole('link', { name: '设备与测点', exact: true }).click();
+      await navLink('设备与测点').click();
       const selector = page.getByTestId('iot-new-device-source');
       await selector.waitFor();
       await until(async () => !(await selector.isDisabled()), 'tenant source catalog loaded');
@@ -691,7 +691,7 @@ try {
       await page.locator(`.iot-device-row[data-device-id="${created.id}"]`).click();
       assert.match(await page.getByTestId('iot-current-source').innerText(), /source-b/);
       assert.equal(await selector.inputValue(), '');
-      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await navLink('生产工艺').click();
       await ready('separation');
     },
   );
@@ -753,7 +753,7 @@ try {
   await check(
     'Cross-source history retains both identities and healthy rows during a second-source outage',
     async () => {
-      await page.getByRole('link', { name: '历史查询', exact: true }).click();
+      await navLink('历史查询').click();
       const selector = page.getByLabel('历史设备集合', { exact: true });
       await selector.waitFor();
       await selector.selectOption([String(devices[0].id), String(peer.id)]);
@@ -799,7 +799,7 @@ try {
         assert.notEqual(job.status, 'FAILED', job.error);
         return job.status === 'SUCCEEDED';
       }, 'cross-source browser export completed', 30_000);
-      await page.getByRole('link', { name: '下载任务', exact: true }).first().click();
+      await navLink('下载任务').click();
       const row = page.getByTestId(`iot-export-${job.id}`);
       await row.waitFor();
       assert.match(await row.getByTestId('iot-export-sources').innerText(), /source-a/);
@@ -821,7 +821,7 @@ try {
     'Cross-source history cancellation, tenant replacement and remount discard late values and source selections',
     async () => {
       const configure = async () => {
-        await page.getByRole('link', { name: '历史查询', exact: true }).click();
+        await navLink('历史查询').click();
         await page.getByLabel('历史设备集合', { exact: true }).selectOption([String(devices[0].id), String(peer.id)]);
         await page.getByLabel('历史指标', { exact: true }).selectOption('pressure');
       };
@@ -852,7 +852,7 @@ try {
       await page.getByTestId('iot-history-run').waitFor();
       await tick(2300);
       assert.equal(await page.getByTestId('iot-history-results').locator('tbody tr').count(), 0);
-      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await navLink('生产工艺').click();
       await ready('separation');
     },
   );
@@ -916,13 +916,13 @@ try {
       };
       // Leave the preceding live process page before installing gates, so a
       // last process poll cannot contaminate the dashboard-only lane counts.
-      await page.getByRole('link', { name: '设备与测点', exact: true }).click();
+      await navLink('设备与测点').click();
       await page.getByTestId('iot-new-device-source').waitFor();
       await until(async () => (await page.getByTestId('harness-pending').innerText()) === '0', 'non-query workbench catalog is ready and process requests stopped');
       await page.route(matcher, holdQueries);
       page.on('response', observe);
       try {
-        await page.getByRole('link', { name: '设备看板', exact: true }).click();
+        await navLink('设备看板').click();
         await until(async () => heldA >= 2 && heldB >= 1, 'independent A and B source lanes start');
         // With six same-source widgets, only the two active lane slots may
         // reach transport. The remaining four must wait in the UI scheduler.
@@ -990,7 +990,7 @@ try {
       }
       await page.locator('#remount').click();
       await page.getByTestId('harness-status').filter({ hasText: /^已挂载$/ }).waitFor();
-      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await navLink('生产工艺').click();
       await ready('separation');
     },
   );

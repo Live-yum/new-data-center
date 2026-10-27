@@ -26,8 +26,10 @@ PERMISSIONS = {
     'iot:dashboard:configure', 'iot:data:query', 'iot:data:export',
 }
 SOURCES = {
-    'source-a': {'port': 48084, 'token': 'ci-disposable-realdb-source-a-token', 'offset': 0},
-    'source-b': {'port': 48085, 'token': 'ci-disposable-realdb-source-b-token', 'offset': 1000},
+    'source-a': {'port': 48084, 'token': 'ci-disposable-realdb-source-a-token', 'offset': 0,
+                 'username': 'ci-fixture-source-a-reader', 'password': 'ci-disposable-source-a-password'},
+    'source-b': {'port': 48085, 'token': 'ci-disposable-realdb-source-b-token', 'offset': 1000,
+                 'username': 'ci-fixture-source-b-reader', 'password': 'ci-disposable-source-b-password'},
 }
 
 
@@ -39,6 +41,8 @@ class FixtureServer(ThreadingHTTPServer):
         self.source = source
         self.spec = SOURCES[source]
         self.lock = threading.Lock()
+        self.active_token = self.spec['token']
+        self.session_number = 0
         self.state = {'sourceId': source, 'mode': 'normal', 'delayMs': 0,
                       'historyDelayMs': 0, 'requests': []}
         super().__init__(address, Handler)
@@ -94,10 +98,33 @@ class Handler(BaseHTTPRequestHandler):
                         0 if value('id') in ('7001', '7002') else 403)
         elif path == '/rpc-api/system/tenant/id-list':
             self.common([7001, 7002])
-        elif path in ('/api/realdata', '/api/hisdata'):
-            authenticated = value('token') == self.server.spec['token']
+        elif path == '/api/userlogin':
+            # Documented vendor GET authentication contract; fixture-only accounts.
+            # Never record query strings, usernames, passwords or issued tokens.
+            authenticated = (value('user') == self.server.spec['username']
+                             and value('pass') == self.server.spec['password'])
+            authorized = authenticated and mode != 'unauthorized'
             with self.server.lock:
-                event.update({'authenticated': authenticated})
+                event.update({'kind': 'authentication', 'authenticated': authenticated,
+                              'authorized': authorized})
+                if authorized:
+                    self.server.session_number += 1
+                    self.server.active_token = (self.server.spec['token']
+                                                + f'-session-{self.server.session_number}')
+                    token = self.server.active_token
+            if not authorized:
+                self.respond({'code': 403, 'msg': 'TEST FIXTURE rejected login'}, 403)
+                return
+            self.respond({'token': token})
+        elif path in ('/api/realdata', '/api/hisdata'):
+            with self.server.lock:
+                authenticated = bool(self.server.active_token) and value('token') == self.server.active_token
+                event.update({'authenticated': authenticated,
+                              'authorized': authenticated and mode != 'unauthorized'})
+                if authenticated and mode == 'unauthorized':
+                    # A rejected session never becomes valid again merely because
+                    # the outage toggle clears. Recovery needs explicit login.
+                    self.server.active_token = None
             if not authenticated or mode == 'unauthorized':
                 self.respond({'code': 403, 'msg': 'TEST FIXTURE rejected vendor authentication'}, 403)
                 return

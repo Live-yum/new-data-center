@@ -265,8 +265,11 @@ try:
     check('same-named devices and identical vendor point strings retain independent source/value/history identity')
 
     peer_query = {**query, 'deviceIds': [peer['id']]}
+    login_events = lambda source: [entry for entry in state(source)['requests'] if entry['path'] == '/api/userlogin']
+    assert login_events('source-a') == [] and login_events('source-b') == [], 'Initial static fixture sessions need no login'
     for mode, delay in (('failure', 0), ('unauthorized', 0), ('normal', 5000)):
         control(mode, delay, source='source-b')
+        before_a_logins = len(login_events('source-a'))
         before_a = len(vendor_reads('source-a'))
         deny('/query/realtime', data=peer_query)
         assert len(vendor_reads('source-a')) == before_a, 'A failed B-only request must never route to source A'
@@ -281,8 +284,17 @@ try:
             serialized = json.dumps(result)
             assert 'token=' not in serialized and '127.0.0.1' not in serialized
         assert time.monotonic() - start < 14, 'Failed source must have bounded wait, not obscure healthy source'
+        before_recovery = len(login_events('source-b'))
         control(source='source-b')
         assert api('/query/realtime', 'POST', peer_query)['series'][0]['points'][0]['value'] == 1010.25
+        assert len(login_events('source-a')) == before_a_logins, 'B auth failure must not invalidate A session'
+        if mode == 'unauthorized':
+            attempts = login_events('source-b')
+            assert len(attempts) == before_recovery + 1, 'Next explicit request must authenticate B again exactly once'
+            assert attempts[-1]['authenticated'] and attempts[-1]['authorized']
+            assert any(entry['authenticated'] and not entry['authorized'] for entry in attempts[:-1]), 'Failure mode must reject even valid B credentials'
+        else:
+            assert len(login_events('source-b')) == before_recovery, 'Outage/timeout must not gratuitously replace valid sessions'
     check('per-source outage, rejected authentication and timeout preserve healthy results without cross-source fallback')
 
     unavailable_query = {**query, 'deviceIds': [unavailable['id']]}
@@ -363,6 +375,12 @@ try:
 finally:
     import sys
     failure = repr(sys.exc_info()[1]) if sys.exc_info()[1] else None
+    # Preserve redacted peer evidence even if a later API assertion fails.
+    try:
+        audits = {source: state(source) for source in SOURCES}
+        (DIRECTORY / 'multi-source-api-audit.json').write_text(json.dumps(audits, ensure_ascii=False, indent=2) + '\n')
+    except Exception:
+        pass
     for source in SOURCES:
         try:
             control(source=source)

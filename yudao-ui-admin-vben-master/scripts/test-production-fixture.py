@@ -38,6 +38,13 @@ class FixtureTests(unittest.TestCase):
         cls.other.server_close()
         cls.other_thread.join()
 
+    def setUp(self):
+        for server in (self.server, self.other):
+            with server.lock:
+                server.active_token = server.spec['token']
+                server.session_number = 0
+                server.state.update({'mode': 'normal', 'delayMs': 0, 'historyDelayMs': 0, 'requests': []})
+
     def call(self, path, method='GET', data=None, other=False):
         base = f'http://127.0.0.1:{self.other.server_port}' if other else self.base
         request = Request(base+path, method=method,
@@ -105,6 +112,30 @@ class FixtureTests(unittest.TestCase):
             audit = json.dumps(self.call('/__fixture/state', other=other)[1])
             for spec in FIXTURE.SOURCES.values():
                 self.assertNotIn(spec['token'], audit)
+
+    def test_source_login_uses_own_credentials_and_rotates_rejected_sessions(self):
+        a, b = FIXTURE.SOURCES['source-a'], FIXTURE.SOURCES['source-b']
+        login = lambda spec: '/api/userlogin?' + urlencode({'user': spec['username'], 'pass': spec['password']})
+        point = '/api/realdata?names=fixture.device.1.pressure&token='
+        self.assertEqual(self.call(login(a), other=True)[0], 403)
+        self.assertEqual(self.call(login(b))[0], 403)
+        self.call('/__fixture/control', 'POST', {'mode': 'unauthorized'}, other=True)
+        self.assertEqual(self.call(point+b['token'], other=True)[0], 403)
+        self.assertEqual(self.call(login(b), other=True)[0], 403)
+        self.call('/__fixture/control', 'POST', {'mode': 'normal'}, other=True)
+        # Clearing the fixture failure does not resurrect a rejected credential.
+        self.assertEqual(self.call(point+b['token'], other=True)[0], 403)
+        status, response = self.call(login(b), other=True)
+        self.assertEqual(status, 200)
+        session = response['token']
+        self.assertNotEqual(session, b['token'])
+        self.assertEqual(self.call(point+session, other=True)[1]['items'][0]['val'], 1010.25)
+        self.assertEqual(self.call(point+session)[0], 403)
+        self.assertEqual(self.call(point+a['token'])[1]['items'][0]['val'], 10.25)
+        for other in (False, True):
+            audit = json.dumps(self.call('/__fixture/state', other=other)[1])
+            for secret in (a['username'], a['password'], a['token'], b['username'], b['password'], b['token'], session):
+                self.assertNotIn(secret, audit)
 
     def test_history_delay_and_source_controls_are_bounded(self):
         self.assertEqual(self.call('/__fixture/control', 'POST', {'historyDelayMs': 5001})[0], 400)

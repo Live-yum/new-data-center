@@ -17,12 +17,17 @@ this does not validate the formal login screen or the deployment gateway.
 
 - Launch requires `CI_CONTRACT_FIXTURE=explicit-test-only`. Two **independent
   processes** bind only `127.0.0.1:48084` (`source-a`) and `127.0.0.1:48085`
-  (`source-b`); each has its own disposable token, state, request audit and failure
+  (`source-b`); each has its own disposable token/account, state, request audit and failure
   control. Only A supplies the allowlisted system RPC contract peer.
 - Both sources expose the **same point names**, including
   `fixture.device.1.pressure`, but return distinguishable values `10.25` and
   `1010.25`. Each rejects the other's token. No fixture token accesses a real
-  service, and URLs/tokens never enter evidence logs or browser metadata.
+  service, and URLs/tokens/passwords never enter peer audits or browser metadata.
+- The documented `/api/userlogin?user=…&pass=…` authentication contract accepts
+  only that peer’s disposable account and returns a fresh test session token.
+  Authentication failure revokes the old session; clearing the fixture failure
+  does not revive it. The next explicit B request must log in again while A’s
+  session remains untouched. Production token invalidation is not weakened.
 - The isolated service configuration explicitly allows tenant 7001 to use A/B
   and tenant 7002 to use B only. A third `source-disabled` entry has no listener
   and proves unavailable-source behavior. Legacy default is disabled, so missing
@@ -31,15 +36,16 @@ this does not validate the formal login screen or the deployment gateway.
   Invalid tokens, missing permissions, forged headers and tenant mismatches fail.
 - API setup creates metadata using authenticated HTTP, not direct SQL inserts.
   All three schema migrations run only on a fresh job-local database.
-- Only vendor read endpoints `/api/realdata` and `/api/hisdata` exist. No real
-  device operations, upstream write APIs, deployment or persistent credentials.
+- Only vendor authentication `/api/userlogin` and data reads `/api/realdata`
+  and `/api/hisdata` exist. No device operations, vendor data-write APIs,
+  deployment or persistent credentials.
 - `CONFIGURED` means configuration readiness, never connection success.
 
 ## Coverage and evidence
 
 The suite retains **all 7 original packaged API checks and 17 browser checks**,
 then adds named-source checks. Minimum totals are **15 API + 23 browser checks**;
-8 independent fixture-unit checks verify the peers themselves, not the app.
+9 independent fixture-unit checks verify the peers themselves, not the app.
 The unrelated frontend, demo, Java and PostgreSQL regressions remain required.
 
 Additional packaged API coverage:
@@ -49,7 +55,9 @@ Additional packaged API coverage:
 2. Equal device names and identical vendor points retain source/value identity in
    realtime and history. Metadata never exposes credentials or allowlists.
 3. Source B outage, rejected authentication and bounded timeout leave source A's
-   successful rows intact. B-only requests never route to A, including recovery.
+   successful rows intact. B-only requests never route to A. Recovery from a
+   rejected session requires a real per-source login with new fixture token;
+   outage/timeout do not gratuitously invalidate either source’s valid session.
 4. Disabled sources fail explicitly, without contacting any alternate peer.
 5. Observe a real worker `RUNNING` against A, enqueue a cross-source job and
    confirm it remains **QUEUED** while B's point mapping/unit change. Downloaded

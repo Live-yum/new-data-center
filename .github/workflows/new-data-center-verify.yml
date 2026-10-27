@@ -489,6 +489,8 @@ jobs:
             --yudao.iot.sources.source-a.connection.enabled=true \
             --yudao.iot.sources.source-a.connection.base-url=http://127.0.0.1:48084 \
             --yudao.iot.sources.source-a.connection.token=ci-disposable-realdb-source-a-token \
+            --yudao.iot.sources.source-a.connection.username=ci-fixture-source-a-reader \
+            --yudao.iot.sources.source-a.connection.password=ci-disposable-source-a-password \
             --yudao.iot.sources.source-a.connection.security-enabled=true \
             --yudao.iot.sources.source-a.connection.read-timeout=4s \
             --yudao.iot.sources.source-a.connection.connect-timeout=1s \
@@ -500,6 +502,8 @@ jobs:
             --yudao.iot.sources.source-b.connection.enabled=true \
             --yudao.iot.sources.source-b.connection.base-url=http://127.0.0.1:48085 \
             --yudao.iot.sources.source-b.connection.token=ci-disposable-realdb-source-b-token \
+            --yudao.iot.sources.source-b.connection.username=ci-fixture-source-b-reader \
+            --yudao.iot.sources.source-b.connection.password=ci-disposable-source-b-password \
             --yudao.iot.sources.source-b.connection.security-enabled=true \
             --yudao.iot.sources.source-b.connection.read-timeout=4s \
             --yudao.iot.sources.source-b.connection.connect-timeout=1s \

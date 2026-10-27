@@ -45,6 +45,10 @@ yudao:
       url: ${ADMIN_UI_URL:http://localhost:5173}
   realdb:
     enabled: ${REALDB_ENABLED:false}
+    base-url: ${REALDB_URL:}
+    username: ${REALDB_USERNAME:}
+    password: ${REALDB_PASSWORD:}
+    token: ${REALDB_TOKEN:}
   iot:
     realdb-zone: ${REALDB_ZONE:UTC}
 management:

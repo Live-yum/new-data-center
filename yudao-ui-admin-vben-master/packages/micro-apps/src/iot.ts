@@ -1,5 +1,7 @@
 /** Versioned transport contract. No tokens, arbitrary URLs or device-control API. */
 export interface IotDevice {
+  /** Immutable server-side source binding. Older deployments omit only the legacy default. */
+  sourceId?: string;
   id: number;
   name: string;
   code: string;
@@ -53,23 +55,87 @@ export interface IotQuery {
   aggregation: IotAggregation;
 }
 export interface IotSeries {
+  /** Must match the requested device source; omission is legacy default only. */
+  sourceId?: string;
   deviceId: number;
   metricKey: string;
   unit: string;
-  points: { time: string; value: number | string | null; quality: string }[];
+  points: {
+    time: string;
+    value: number | string | null;
+    quality: string;
+    /** Absent on older servers. RECEIVED is not proof of measurement freshness. */
+    timeSource?: 'DEVICE' | 'RECEIVED';
+  }[];
+}
+export interface IotSourceError {
+  sourceId: string;
+  code: string;
+  message: string;
 }
 export interface IotResult {
   source: string;
+  partial?: boolean;
+  errors?: IotSourceError[];
   series: IotSeries[];
 }
 export interface IotExport {
+  /** Sources captured in the durable export snapshot, not inferred from today's mappings. */
+  sourceIds?: string[];
   id: string;
   status: string;
   createdAt: string;
   expiresAt: string;
   error?: string;
 }
+/** Persisted production process view; templates contain no telemetry or device IDs. */
+export type IotProcessTemplate =
+  | 'separation'
+  | 'gas'
+  | 'storage'
+  | 'utilities'
+  | 'offshore';
+export interface IotProcessScene {
+  id: number;
+  name: string;
+  description?: string;
+  version: number;
+  schemaVersion: 1;
+  template: IotProcessTemplate;
+  bindings: {
+    slotId: string;
+    deviceId: number | null;
+    metricKeys: string[];
+    primaryMetricKey: string;
+  }[];
+  refreshSeconds: number;
+  staleAfterSeconds: number;
+}
+/** Deployment readiness only. CONFIGURED never asserts a successful live connection. */
+export interface IotSource {
+  id: string;
+  name: string;
+  type: 'REALDB';
+  enabled: boolean;
+  configured: boolean;
+  status: 'CONFIGURED' | 'DISABLED' | 'NOT_CONFIGURED';
+  timeZone: string;
+  description: string;
+}
 export interface IotBridge {
+  sources?(signal: AbortSignal): Promise<IotSource[]>;
+  processScenes?(signal: AbortSignal): Promise<IotProcessScene[]>;
+  processScene?(id: number, signal: AbortSignal): Promise<IotProcessScene>;
+  saveProcessScene?(
+    value: IotProcessScene,
+    signal: AbortSignal,
+  ): Promise<IotProcessScene>;
+  deleteProcessScene?(
+    id: number,
+    version: number,
+    signal: AbortSignal,
+  ): Promise<unknown>;
+
   /** Optional read-only demonstration capability. Never provided by the production bridge. */
   demoOilgasQuery?: (
     mode: 'realtime' | 'history',
@@ -78,7 +144,7 @@ export interface IotBridge {
   ) => Promise<IotResult>;
   devices(signal: AbortSignal): Promise<IotDevice[]>;
   createDevice(
-    device: { name: string; code: string },
+    device: { name: string; code: string; sourceId?: string },
     signal: AbortSignal,
   ): Promise<IotDevice>;
   mappings(id: number, signal: AbortSignal): Promise<IotMapping[]>;

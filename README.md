@@ -6,7 +6,9 @@
 
 后端新增 `yudao-module-iot`：可由 `yudao-server` 聚合，也可打包为独立 `exec` 微服务。设备、映射、看板布局与下载任务保存到关系数据库，实时/历史数据通过现有紫金桥客户端读取。独立运行仍需要项目既有的身份、权限和租户服务，不提供绕过登录的生产入口。
 
-演示宿主新增5个可切换的只读油气场景：陆地油气水分离、天然气处理、储罐外输、泵站公用工程、海上平台总览。支持选设备查看模拟实时值与历史趋势；原创 SVG 工艺示意非工程设计，正式模式不启用或回退这些模拟数据。
+正式数据中心增加五类可配置工艺页面：陆地油气水分离、天然气处理、储罐外输、泵站公用工程和海上平台。模板只有图形与设备槽位，不自带设备、点名或数值；由用户绑定本租户实际设备及紫金桥测点，配置保存到数据库，运行时通过正式实时/历史接口读取。另有数据源状态页，区分部署已配置与现场连接已验证，未接通不回退模拟数据。既有无后端演示宿主仅保留为独立开发回归工具，不是生产入口或现场验收证据。
+
+支持部署配置多个命名紫金桥数据源，各自独立连接、认证、时区和有界请求资源。新建源需显式配置可访问租户；设备创建时固定绑定来源，同名点不会跨源合并。跨源查询保留正常来源并标明失败来源，导出按入队时的来源/测点快照执行，任何来源失败都不发布残缺文件。连接凭据只由服务端外部配置提供，不在浏览器或业务数据库录入。旧设备只迁移为 `default`，不自动绑定其他来源。
 
 - [前端工作区、组件绑定和验证](docs/iot-frontend.md)
 - [后端接口、增量数据库脚本和独立服务运行](docs/iot-backend.md)
@@ -25,7 +27,7 @@
 | `yudao-cloud-mini-master-jdk17/yudao-server/` | 本地默认启动入口，聚合 system、infra 和 realdb 客户端 |
 | `yudao-cloud-mini-master-jdk17/yudao-framework/yudao-spring-boot-starter-realdb/` | 独立的紫金桥 REST API 公共模块 |
 | `yudao-ui-admin-vben-master/apps/web-ele/` | 原有 Element Plus 管理端，现在也是 qiankun 主应用 |
-| `yudao-ui-admin-vben-master/apps/web-data-center/` | 数据中心子应用：总览、部门目录和数据字典 |
+| `yudao-ui-admin-vben-master/apps/web-data-center/` | 数据中心子应用：设备、测点、数据源状态、工艺页面、看板、历史下载及原有目录 |
 | `yudao-ui-admin-vben-master/apps/web-micro-demo/` | 无需后端的 qiankun 3 集成示例宿主，使用明确标注的演示数据 |
 | `yudao-ui-admin-vben-master/packages/micro-apps/` | 主子应用通信类型及挂载、更新、卸载调度 |
 | [docs/database.md](docs/database.md) | 数据库配置、初始化、兼容性修复和迁移说明 |

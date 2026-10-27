@@ -4,11 +4,15 @@ import type {
   DataCenterDept,
   DataCenterDictData,
   DataCenterProps,
-  IotBridge,
 } from '@vben/micro-apps';
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import {
+  onBeforeRouteLeave,
+  onBeforeRouteUpdate,
+  useRoute,
+  useRouter,
+} from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 import {
@@ -22,6 +26,7 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { ElAlert, ElButton } from 'element-plus';
 
 import { requestClient } from '#/api/request';
+import { createIotBridge } from './iot-bridge';
 
 const route = useRoute();
 const router = useRouter();
@@ -38,6 +43,20 @@ let lifetime = new AbortController();
 let startVersion = 0;
 let bridgeSession: string | undefined;
 let bridge: DataCenterBridge | undefined;
+let childLeaveGuard: (() => boolean) | undefined;
+let childApprovedPath: string | undefined;
+onBeforeRouteLeave(() => childLeaveGuard?.() ?? true);
+onBeforeRouteUpdate((to, from) => {
+  if (to.query.view === from.query.view) return true;
+  const target = normalizeDataCenterRoute(
+    typeof to.query.view === 'string' ? `/${to.query.view}` : undefined,
+  );
+  if (childApprovedPath === target) {
+    childApprovedPath = undefined;
+    return true;
+  }
+  return childLeaveGuard?.() ?? true;
+});
 
 function sessionKey() {
   return JSON.stringify([
@@ -90,74 +109,14 @@ async function read<T>(
   }
 }
 
-function createIotBridge(session: string): IotBridge {
-  const id = (value: number | string) => encodeURIComponent(String(value));
-  return {
-    devices: (signal) => read('/iot/devices', signal, session),
-    createDevice: (value, signal) =>
-      read('/iot/devices', signal, session, 'POST', value),
-    mappings: (deviceId, signal) =>
-      read(`/iot/devices/${id(deviceId)}/mappings`, signal, session),
-    saveMappings: (deviceId, value, signal) =>
-      read(
-        `/iot/devices/${id(deviceId)}/mappings`,
-        signal,
-        session,
-        'PUT',
-        value,
-      ),
-    dashboards: (signal) => read('/iot/dashboards', signal, session),
-    dashboard: (dashboardId, signal) =>
-      read(`/iot/dashboards/${id(dashboardId)}`, signal, session),
-    saveDashboard: (value, signal) =>
-      read(
-        value.id ? `/iot/dashboards/${id(value.id)}` : '/iot/dashboards',
-        signal,
-        session,
-        value.id ? 'PUT' : 'POST',
-        value,
-      ),
-    deleteDashboard: (dashboardId, version, signal) =>
-      read(
-        `/iot/dashboards/${id(dashboardId)}?version=${id(version)}`,
-        signal,
-        session,
-        'DELETE',
-      ),
-    templates: (signal) => read('/iot/templates', signal, session),
-    createTemplate: (value, signal) =>
-      read('/iot/templates', signal, session, 'POST', value),
-    query: (mode, value, signal) =>
-      read(
-        mode === 'history' ? '/iot/query/history' : '/iot/query/realtime',
-        signal,
-        session,
-        'POST',
-        value,
-      ),
-    exports: (signal) => read('/iot/exports', signal, session),
-    createExport: (value, signal) =>
-      read('/iot/exports', signal, session, 'POST', value),
-    cancelExport: (exportId, signal) =>
-      read(`/iot/exports/${id(exportId)}/cancel`, signal, session, 'POST'),
-    downloadExport: (exportId, signal) =>
-      read(
-        `/iot/exports/${id(exportId)}/file`,
-        signal,
-        session,
-        'GET',
-        undefined,
-        true,
-      ),
-  };
-}
-
 function props(): DataCenterProps {
   const session = sessionKey();
   if (!bridge || bridgeSession !== session) {
     bridgeSession = session;
     bridge = {
-      iot: createIotBridge(session),
+      iot: createIotBridge((path, signal, method, data, blob) =>
+        read(path, signal, session, method, data, blob),
+      ),
       getDepartments: (signal) =>
         read<DataCenterDept[]>('/system/dept/simple-list', signal, session),
       getDictionaries: (signal) =>
@@ -181,17 +140,29 @@ function props(): DataCenterProps {
     route: normalizeDataCenterRoute(
       typeof route.query.view === 'string' ? `/${route.query.view}` : undefined,
     ),
-    onNavigate: (path) => {
+    registerLeaveGuard: (guard) => {
+      if (active && session === sessionKey()) childLeaveGuard = guard;
+    },
+    onNavigate: (path, options) => {
       if (active && accessStore.accessToken) {
         const view = normalizeDataCenterRoute(path).slice(1);
-        if (route.query.view !== view)
-          void router.push({ path: '/data-center', query: { view } });
+        if (route.query.view !== view) {
+          childApprovedPath = normalizeDataCenterRoute(path);
+          void router[options?.replace ? 'replace' : 'push']({
+            path: '/data-center',
+            query: { view },
+          }).finally(() => {
+            childApprovedPath = undefined;
+          });
+        }
       }
     },
   };
 }
 
 async function stop() {
+  childLeaveGuard = undefined;
+  childApprovedPath = undefined;
   const version = ++startVersion;
   lifetime.abort();
   const current = controller;
@@ -252,6 +223,8 @@ async function start() {
 }
 
 watch(sessionKey, async () => {
+  childLeaveGuard = undefined;
+  childApprovedPath = undefined;
   lifetime.abort();
   if (!accessStore.accessToken) {
     await stop();

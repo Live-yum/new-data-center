@@ -17,6 +17,8 @@ import { dataCenterKey } from './context';
 import Workbench from './views/workbench.vue';
 import IotWorkbench from './iot/workbench.vue';
 import OilgasDemo from './iot/OilgasDemo.vue';
+import ProductionScenes from './iot/ProductionScenes.vue';
+import DataSources from './iot/DataSources.vue';
 
 let app: VueApp | undefined;
 let router: Router | undefined;
@@ -45,12 +47,17 @@ export async function mount(props: DataCenterProps = {}) {
       ...['separation', 'gas', 'storage', 'utilities', 'offshore'].map(
         (id) => ({ path: `/demo-${id}`, component: OilgasDemo }),
       ),
+      ...['separation', 'gas', 'storage', 'utilities', 'offshore'].map(
+        (id) => ({ path: `/process-${id}`, component: ProductionScenes }),
+      ),
+      { path: '/sources', component: DataSources },
       { path: '/departments', component: Workbench },
       { path: '/dictionaries', component: Workbench },
       { path: '/:pathMatch(.*)*', redirect: '/overview' },
     ],
   });
-  removeRouteHook = router.afterEach((to) => {
+  removeRouteHook = router.afterEach((to, _from, failure) => {
+    if (failure) return;
     if (to.path !== normalizeDataCenterRoute(state.props.route)) {
       state.props.onNavigate?.(to.path);
     }
@@ -67,10 +74,20 @@ export async function mount(props: DataCenterProps = {}) {
 }
 
 export async function update(props: DataCenterProps) {
-  state.props = { ...state.props, ...props };
-  const path = normalizeDataCenterRoute(state.props.route);
-  if (router && router.currentRoute.value.path !== path)
-    await router.replace(path);
+  const nextProps = { ...state.props, ...props };
+  state.props = nextProps;
+  const path = normalizeDataCenterRoute(nextProps.route);
+  const activeRouter = router;
+  if (activeRouter && activeRouter.currentRoute.value.path !== path) {
+    const failure = await activeRouter.replace(path);
+    // A rejected dirty-draft navigation must restore the host URL, not leave
+    // its selected tab pointing at a page the child refused to open.
+    if (failure && router === activeRouter && state.props === nextProps) {
+      const actual = activeRouter.currentRoute.value.path;
+      state.props = { ...nextProps, route: actual };
+      nextProps.onNavigate?.(actual, { replace: true });
+    }
+  }
 }
 
 export async function unmount() {

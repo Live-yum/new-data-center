@@ -14,22 +14,33 @@ import java.util.*;
 public class IotRepository {
  private final JdbcTemplate db;
  private final ObjectMapper json;
- public IotRepository(JdbcTemplate db, ObjectMapper json) { this.db=db; this.json=json; }
+ private final IotSourceRegistry sources;
+ public IotRepository(JdbcTemplate db, ObjectMapper json, IotSourceRegistry sources) { this.db=db; this.json=json; this.sources=sources; }
  static ServiceException missing() { return new ServiceException(1_070_000_404,"记录不存在或无权访问"); }
  static ServiceException conflict() { return new ServiceException(1_070_000_409,"版本已变化，请重新加载"); }
  public List<Device> devices(long tenant) {
-  return db.query("SELECT id,name,code FROM iot_device WHERE tenant_id=? ORDER BY id LIMIT 500",
-    (rs,n)->new Device(rs.getLong("id"),rs.getString("name"),rs.getString("code")),tenant);
+  return db.query("SELECT id,name,code,source_id FROM iot_device WHERE tenant_id=? ORDER BY id LIMIT 500",
+    (rs,n)->new Device(rs.getLong("id"),rs.getString("name"),rs.getString("code"),rs.getString("source_id")),tenant);
  }
  public Device device(long tenant,long id) {
-  return db.query("SELECT id,name,code FROM iot_device WHERE tenant_id=? AND id=?",
-    (rs,n)->new Device(rs.getLong("id"),rs.getString("name"),rs.getString("code")),tenant,id)
+  return db.query("SELECT id,name,code,source_id FROM iot_device WHERE tenant_id=? AND id=?",
+    (rs,n)->new Device(rs.getLong("id"),rs.getString("name"),rs.getString("code"),rs.getString("source_id")),tenant,id)
     .stream().findFirst().orElseThrow(IotRepository::missing);
  }
  public Device createDevice(long tenant,DeviceInput body) {
+  if(tenant<=0 || body==null) throw new ServiceException(1_070_000_400,"无效租户或设备");
+  // Missing sourceId has one explicit compatibility meaning, never 'first available source'.
+  String sourceId=body.sourceId()==null?"default":body.sourceId();
+  sources.requireAllowed(tenant,sourceId);
   Long id=db.queryForObject("SELECT nextval('iot_device_seq')",Long.class);
-  db.update("INSERT INTO iot_device(id,tenant_id,name,code) VALUES(?,?,?,?)",id,tenant,body.name(),body.code());
+  db.update("INSERT INTO iot_device(id,tenant_id,name,code,source_id) VALUES(?,?,?,?,?)",id,tenant,body.name(),body.code(),sourceId);
   return device(tenant,id);
+ }
+ public void lockDevices(long tenant,List<Long> ids) {
+  ids.stream().distinct().sorted().forEach(id->{
+   List<Long> found=db.query("SELECT id FROM iot_device WHERE tenant_id=? AND id=? FOR UPDATE",(rs,n)->rs.getLong(1),tenant,id);
+   if(found.isEmpty()) throw missing();
+  });
  }
  public List<Mapping> mappings(long tenant,long id) {
   device(tenant,id);
@@ -38,7 +49,7 @@ public class IotRepository {
  }
  @Transactional
  public List<Mapping> replaceMappings(long tenant,long id,List<Mapping> mappings) {
-  device(tenant,id);
+  sources.requireAllowed(tenant,device(tenant,id).sourceId());
   // Serialize replacements, including the initially empty mapping set.
   db.queryForObject("SELECT id FROM iot_device WHERE tenant_id=? AND id=? FOR UPDATE",Long.class,tenant,id);
   if(mappings==null || mappings.size()>100 || mappings.stream().map(Mapping::metricKey).distinct().count()!=mappings.size())

@@ -121,6 +121,14 @@ try {
 
 文档建议一次发布项调整不要超过 800 点，实际容量与服务器性能有关。接口没有声明通用分页机制，组件不擅自切分批量请求或历史查询，以免改变顺序、部分成功和同步语义；调用方应按服务器配置的查询/写入上限分批安排业务。
 
+## IoT 多安装注册表（不改变本starter的66操作契约）
+
+`yudao-module-iot` 的 `IotSourceRegistry` 在应用层组织多个独立 `DefaultRealDbClient`。配置位置是 `yudao.iot.sources.<sourceId>.connection.*`，连接字段沿用本节 `RealDbProperties`；每个命名源另外声明 `name`、`time-zone`、`revision` 与明确的 `allowed-tenants`。每个实例独立HTTP客户端、认证缓存、token锁和超时，构造/目录读取不发起登录或探测。IoT仍只调用只读数据接口，没有向浏览器开放本starter的写值、SQL、控制或组态操作。
+
+原 `yudao.realdb.*` 自动装配/自定义Bean仍保持向后兼容，对应IoT保留源 `default`。命名源不注册成同类型Spring单例Bean、不争抢/覆盖旧Bean，不会改变其他微服务注入原 `RealDbClient` 的行为。新源的URL与凭据仅来自部署配置，浏览器只传平台设备ID/统一指标，绑定源创建后不可更改。目录缺省deny-all（旧default兼容范围例外需显式管理）；sourceId不等于供应商 `/api/source` 组态数据源，它是平台命名的**独立紫金桥服务器连接**。
+
+IoT每源最多2个并发任务+2个排队位置，连接超时上限10秒、读取上限30秒，IoT整组操作另有25秒硬截止（含排队/登录/读取，可能早于单次HTTP超时）；这些IoT安全预算不会缩小starter独立使用时的协议范围或同步发布190秒默认超时。查询/导出逐源转换时区与隔离错误，同名点只在同一个源内去重，无跨源fallback。完整部署示例、授权边界、迁移、部分失败与不可变导出快照详见 [IoT后端契约](iot-backend.md)。这些都是受控loopback HTTP/数据库测试，不是已接通用户现场服务器的声明。
+
 ## 66 个操作对应表
 
 下表的查询参数省略通用 `token`。表中 `segments` 代表经逐段编码的层级路径。参数的必填性见后面的调用与组态说明，Java 方法签名在 `RealDbClient` 中。

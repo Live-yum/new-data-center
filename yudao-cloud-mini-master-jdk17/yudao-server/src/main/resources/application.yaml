@@ -154,7 +154,13 @@ yudao:
     begin-code: 100000
     end-code: 999999
   realdb:
-    enabled: false # 参见 docs/realdb-api.md，通过外部配置提供紫金桥连接与凭据
+    enabled: ${REALDB_ENABLED:false} # 只读取部署外部配置，不在浏览器录入凭据
+    base-url: ${REALDB_URL:}
+    username: ${REALDB_USERNAME:}
+    password: ${REALDB_PASSWORD:}
+    token: ${REALDB_TOKEN:}
+  iot:
+    realdb-zone: ${REALDB_ZONE:UTC}
 
 management:
   endpoints:

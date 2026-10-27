@@ -344,3 +344,246 @@ jobs:
           path: ${{ runner.temp }}/iot-service-artifacts/
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload verified executable for isolated production-path contract tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-iot-executable-${{ github.sha }}
+          path: yudao-cloud-mini-master-jdk17/yudao-module-iot/target/yudao-module-iot-exec.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  production-contract:
+    name: Production pages + authenticated API (explicit contract fixtures, not site acceptance)
+    needs: java-postgresql
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: iot_contract_test
+          POSTGRES_USER: iot_contract_test
+          POSTGRES_PASSWORD: ci_disposable_contract_password
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U iot_contract_test -d iot_contract_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: yudao-ui-admin-vben-master
+    env:
+      CI_CONTRACT_FIXTURE: explicit-test-only
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Initialize runner-local contract evidence directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/production-contract-artifacts"
+          printf 'PRODUCTION_TEST_ARTIFACT_DIR=%s/production-contract-artifacts\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.18.0"
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Download only this run's previously tested executable
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-iot-executable-${{ github.sha }}
+          path: ${{ runner.temp }}/verified-iot
+      - name: Install pinned frontend dependencies and build production child/test-only host
+        run: |
+          npm install --global pnpm@11.16.0 --registry=https://registry.npmjs.org
+          pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+          pnpm build:data-center
+          pnpm exec tsc -p scripts/production-harness/tsconfig.json
+          pnpm exec vite build --config scripts/production-harness/vite.config.ts
+          python3 -m py_compile scripts/production-fixture.py scripts/test-production-fixture.py scripts/test-production-api.py
+          node --check scripts/test-production-pages.mjs
+          python3 scripts/test-production-fixture.py
+      - name: Initialize only the new isolated contract database
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PGPASSWORD: ci_disposable_contract_password
+          PGOPTIONS: -c search_path=public
+        run: |
+          psql=(docker exec -i --env PGPASSWORD --env PGOPTIONS "$POSTGRES_CONTAINER_ID"
+                psql --no-psqlrc --no-password --host=127.0.0.1 --port=5432
+                --username=iot_contract_test --dbname=iot_contract_test --set=ON_ERROR_STOP=1)
+          "${psql[@]}" --file=- <<'SQL'
+          DO $$ BEGIN
+            IF current_database() <> 'iot_contract_test' OR current_user <> 'iot_contract_test'
+              OR EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public') THEN
+              RAISE EXCEPTION 'Requires a newly created, empty, disposable contract-test database';
+            END IF;
+          END $$;
+          SQL
+          "${psql[@]}" --file=- < ../yudao-cloud-mini-master-jdk17/sql/postgresql/upgrade/20261026_iot.sql
+          "${psql[@]}" --file=- < ../yudao-cloud-mini-master-jdk17/sql/postgresql/upgrade/20261027_iot_process.sql
+          "${psql[@]}" --file=- < ../yudao-cloud-mini-master-jdk17/sql/postgresql/upgrade/20261027_iot_sources.sql
+      - name: Verify runner browser and Chinese glyph coverage
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$PRODUCTION_TEST_ARTIFACT_DIR"
+          chrome="$(command -v google-chrome || command -v google-chrome-stable)"
+          test -x "$chrome"
+          version="$("$chrome" --version)"
+          test "$(printf '%s' "$version" | grep -oE '[0-9]+' | head -1)" -ge 133
+          printf 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=%s\n' "$chrome" >> "$GITHUB_ENV"
+          printf '%s\n' "$version" > "$PRODUCTION_TEST_ARTIFACT_DIR/browser-environment.log"
+          if [[ -z "$(fc-list :lang=zh-cn file)" ]]; then
+            timeout 180s sudo apt-get --no-install-recommends --yes \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 install fonts-wqy-zenhei
+            fc-cache -f
+          fi
+          test -n "$(fc-list :lang=zh-cn file)"
+      - name: Run actual packaged API + production page browser contract tests
+        env:
+          DB_HOST: 127.0.0.1
+          DB_NAME: iot_contract_test
+          DB_USERNAME: iot_contract_test
+          DB_PASSWORD: ci_disposable_contract_password
+          IOT_SERVER_PORT: 48083
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+          REALDB_ENABLED: "false"
+          REALDB_ZONE: UTC
+          SYSTEM_SERVICE_URL: http://127.0.0.1:48084
+          INFRA_SERVICE_URL: http://127.0.0.1:48084
+        run: |
+          mkdir -p "$PRODUCTION_TEST_ARTIFACT_DIR"
+          pids=()
+          trap 'for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done' EXIT
+          python3 scripts/production-fixture.py --source source-a > "$PRODUCTION_TEST_ARTIFACT_DIR/fixture-source-a.log" 2>&1 &
+          pids+=("$!")
+          python3 scripts/production-fixture.py --source source-b > "$PRODUCTION_TEST_ARTIFACT_DIR/fixture-source-b.log" 2>&1 &
+          pids+=("$!")
+          # Independent listeners, credentials and state; identical point strings
+          # intentionally return different values. No actual endpoints/secrets.
+          for port in 48084 48085; do
+            ready=false
+            for attempt in {1..20}; do
+              if curl --fail --silent "http://127.0.0.1:$port/__fixture/state" > /dev/null; then
+                ready=true; break
+              fi
+              sleep 1
+            done
+            test "$ready" = true
+          done
+          java -jar "$RUNNER_TEMP/verified-iot/yudao-module-iot-exec.jar" \
+            --yudao.iot.legacy-default-enabled=false \
+            --yudao.iot.sources.source-a.name="TEST FIXTURE A（非现场）" \
+            --yudao.iot.sources.source-a.time-zone=UTC \
+            --yudao.iot.sources.source-a.revision=fixture-v1 \
+            --yudao.iot.sources.source-a.allowed-tenants[0]=7001 \
+            --yudao.iot.sources.source-a.connection.enabled=true \
+            --yudao.iot.sources.source-a.connection.base-url=http://127.0.0.1:48084 \
+            --yudao.iot.sources.source-a.connection.token=ci-disposable-realdb-source-a-token \
+            --yudao.iot.sources.source-a.connection.username=ci-fixture-source-a-reader \
+            --yudao.iot.sources.source-a.connection.password=ci-disposable-source-a-password \
+            --yudao.iot.sources.source-a.connection.security-enabled=true \
+            --yudao.iot.sources.source-a.connection.read-timeout=4s \
+            --yudao.iot.sources.source-a.connection.connect-timeout=1s \
+            --yudao.iot.sources.source-b.name="TEST FIXTURE B（非现场）" \
+            --yudao.iot.sources.source-b.time-zone=UTC \
+            --yudao.iot.sources.source-b.revision=fixture-v1 \
+            --yudao.iot.sources.source-b.allowed-tenants[0]=7001 \
+            --yudao.iot.sources.source-b.allowed-tenants[1]=7002 \
+            --yudao.iot.sources.source-b.connection.enabled=true \
+            --yudao.iot.sources.source-b.connection.base-url=http://127.0.0.1:48085 \
+            --yudao.iot.sources.source-b.connection.token=ci-disposable-realdb-source-b-token \
+            --yudao.iot.sources.source-b.connection.username=ci-fixture-source-b-reader \
+            --yudao.iot.sources.source-b.connection.password=ci-disposable-source-b-password \
+            --yudao.iot.sources.source-b.connection.security-enabled=true \
+            --yudao.iot.sources.source-b.connection.read-timeout=4s \
+            --yudao.iot.sources.source-b.connection.connect-timeout=1s \
+            --yudao.iot.sources.source-disabled.name="TEST FIXTURE DISABLED（非现场）" \
+            --yudao.iot.sources.source-disabled.time-zone=UTC \
+            --yudao.iot.sources.source-disabled.allowed-tenants[0]=7001 \
+            --yudao.iot.sources.source-disabled.connection.enabled=false \
+            > "$PRODUCTION_TEST_ARTIFACT_DIR/service.log" 2>&1 &
+          pids+=("$!")
+          python3 scripts/test-production-api.py 2>&1 | tee "$PRODUCTION_TEST_ARTIFACT_DIR/api-test.log"
+          node scripts/production-preview.mjs > "$PRODUCTION_TEST_ARTIFACT_DIR/preview.log" 2>&1 &
+          pids+=("$!")
+          ready=false
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:5176/ > /dev/null && \
+               curl --fail --silent http://127.0.0.1:5175/micro-apps/data-center/ > /dev/null; then
+              ready=true; break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          node scripts/test-production-pages.mjs 2>&1 | tee "$PRODUCTION_TEST_ARTIFACT_DIR/browser-test.log"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-api-verification.json"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-browser-verification.json"
+          for scene in separation gas storage utilities offshore; do
+            test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-$scene-desktop.png"
+          done
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-separation-mobile.png"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-cross-source-desktop.png"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-cross-source-history.png"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-cross-source-history.csv"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/cross-source-snapshot-history.csv"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/multi-source-api-audit.json"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/source-scheduler-audit.json"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-source-scheduler.png"
+      - name: Require complete multi-source evidence for this exact commit
+        run: |
+          python3 - <<'PYVERIFY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['PRODUCTION_TEST_ARTIFACT_DIR'])
+          counts = {}
+          for filename, minimum in [('production-api-verification.json', 15), ('production-browser-verification.json', 24)]:
+              evidence = json.loads((root / filename).read_text())
+              assert evidence['passed'] is True and evidence['failure'] is None, evidence
+              assert evidence['commit'] == os.environ['GITHUB_SHA'], 'Evidence must match the packaged/tested revision'
+              assert evidence['evidenceType'] == 'AUTOMATED_CONTRACT_FIXTURE'
+              assert len(evidence['checks']) >= minimum, 'Original checks may not be silently removed'
+              assert len(set(evidence['checks'])) == len(evidence['checks']), 'Check names must be unique'
+              for capture in evidence.get('captures', []):
+                  assert capture['commit'] == os.environ['GITHUB_SHA']
+                  assert capture['screenshotIncludesFixtureBanner'] is True
+                  assert capture['evidenceType'] == 'AUTOMATED_CONTRACT_FIXTURE'
+              counts[filename] = len(evidence['checks'])
+          for filename in ['multi-source-api-audit.json', 'upstream-contract-audit.json']:
+              audit = json.loads((root / filename).read_text())
+              assert set(audit) == {'source-a', 'source-b'}
+              for source, peer in audit.items():
+                  assert peer['sourceId'] == source
+                  reads = [entry for entry in peer['requests'] if entry['path'].startswith('/api/')]
+                  assert reads and all(entry['sourceId'] == source and entry['method'] == 'GET' and entry['authenticated'] for entry in reads)
+          scheduler = json.loads((root / 'source-scheduler-audit.json').read_text())
+          assert scheduler['commit'] == os.environ['GITHUB_SHA']
+          assert scheduler['evidenceType'] == 'AUTOMATED_CONTRACT_FIXTURE'
+          assert scheduler['sameSourceWidgets'] > 4 and scheduler['initialSameSourceTransportConcurrency'] <= 2
+          assert scheduler['healthyPolledWhileOtherPending'] and scheduler['blockedSourceRecovered']
+          assert scheduler['heldForMs'] >= 10000 and len(scheduler['actualReadResponses']) > scheduler['sameSourceWidgets']
+          summary = ('## Multi-source production-path contracts — TEST FIXTURE, NOT site acceptance\n\n'
+                     + '\n'.join(f'- {name}: {count} passed checks' for name, count in counts.items())
+                     + '\n- Two independent named loopback peers, distinct credentials and identical point names; real packaged service, tenant/auth filters and PostgreSQL.\n'
+                     + '- Includes healthy-source isolation, immutable queued export snapshots, source-labelled CSV, cancellation and remount.\n')
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(summary)
+          PYVERIFY
+      - name: Upload explicitly labelled contract evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-contract-fixture-NOT-site-acceptance-${{ github.sha }}
+          path: ${{ runner.temp }}/production-contract-artifacts/
+          if-no-files-found: error
+          retention-days: 7

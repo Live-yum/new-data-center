@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { OilgasScene } from '@vben/micro-apps';
+import type { ProcessDiagramScene } from './process-model';
 const props = defineProps<{
-  scene: OilgasScene;
+  scene: ProcessDiagramScene;
   selected: number;
   readings: Record<number, string>;
 }>();
@@ -184,6 +184,7 @@ const layout = computed(() => layouts[props.scene.id]!);
       @keydown.enter="emit('select', device.id)"
       @keydown.space.prevent="emit('select', device.id)"
     >
+      <title>{{ device.name }} · {{ device.code }}</title>
       <rect
         x="-93"
         y="-83"
@@ -227,8 +228,17 @@ const layout = computed(() => layouts[props.scene.id]!);
           <rect x="-60" y="52" width="120" height="7" rx="2" />
         </template>
       </g>
-      <text y="-96" text-anchor="middle" fill="#a0bfce" font-size="12">
-        {{ device.code }}
+      <text
+        y="-96"
+        text-anchor="middle"
+        fill="#a0bfce"
+        font-size="12"
+        :textLength="device.code.length > 15 ? 180 : undefined"
+        lengthAdjust="spacingAndGlyphs"
+      >
+        {{
+          device.code.length > 24 ? `${device.code.slice(0, 23)}…` : device.code
+        }}
       </text>
       <text
         y="107"
@@ -236,10 +246,22 @@ const layout = computed(() => layouts[props.scene.id]!);
         fill="#effaff"
         font-size="15"
         font-weight="600"
+        :textLength="device.name.length > 12 ? 180 : undefined"
+        lengthAdjust="spacingAndGlyphs"
       >
-        {{ device.name }}
+        {{
+          device.name.length > 18 ? `${device.name.slice(0, 17)}…` : device.name
+        }}
       </text>
-      <text y="132" text-anchor="middle" fill="#69dfca" font-size="16">
+      <text
+        y="132"
+        text-anchor="middle"
+        fill="#69dfca"
+        font-size="16"
+        :textLength="(readings[device.id]?.length ?? 0) > 12 ? 195 : undefined"
+        lengthAdjust="spacingAndGlyphs"
+      >
+        <title>{{ readings[device.id] || '—' }}</title>
         {{ readings[device.id] || '—' }}
       </text>
     </g>

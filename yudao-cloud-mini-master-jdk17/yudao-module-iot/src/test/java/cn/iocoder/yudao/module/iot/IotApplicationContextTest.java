@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "spring.datasource.dynamic.datasource.master.username=sa",
                 "spring.datasource.dynamic.datasource.master.password=",
                 "spring.sql.init.mode=always",
-                "spring.sql.init.schema-locations=file:../sql/postgresql/upgrade/20261026_iot.sql"
+                "spring.sql.init.schema-locations=file:../sql/postgresql/upgrade/20261026_iot.sql,file:../sql/postgresql/upgrade/20261027_iot_process.sql,file:../sql/postgresql/upgrade/20261027_iot_sources.sql"
         })
 @ActiveProfiles("iot")
 @AutoConfigureMockMvc

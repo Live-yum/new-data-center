@@ -131,7 +131,8 @@ async function ready(scene, value = 10.25, source = 'source-a') {
     async () => (await point().getAttribute('data-status')) === 'fresh',
     'REALDB device-time fresh reading',
   );
-  assert.ok((await point().locator('strong').innerText()).includes(String(value)));
+  const formatted = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 }).format(value);
+  assert.ok((await point().locator('strong').innerText()).includes(formatted));
   assert.equal(await page.getByTestId('production-live').getAttribute('data-source-id'), source);
   assert.match(await point().innerText(), /GOOD/);
 }
@@ -762,14 +763,14 @@ try {
       await until(async () => (await results.locator('tbody tr').count()) > 10, 'real cross-source history rows');
       assert.match(await results.innerText(), /source-a/);
       assert.match(await results.innerText(), /source-b/);
-      assert.match(await results.innerText(), /1010\.25/);
+      assert.match(await results.innerText(), /1,010\.25/);
       assert.equal(await results.locator('.iot-chart-series').count(), 2);
       await control('failure', 0, 'source-b');
       await page.getByTestId('iot-history-run').click();
       await page.getByTestId('iot-history-errors').waitFor();
       assert.match(await page.getByTestId('iot-history-errors').innerText(), /source-b/);
       assert.match(await results.innerText(), /source-a/);
-      assert.doesNotMatch(await results.innerText(), /source-b|1010\.25/);
+      assert.doesNotMatch(await results.innerText(), /source-b|1,010\.25/);
       assert.equal(await results.locator('.iot-chart-series').count(), 1);
       await control('normal', 0, 'source-b');
       await page.getByTestId('iot-history-run').click();
@@ -856,7 +857,145 @@ try {
     },
   );
 
-  assert.ok(checks.length >= 23, 'Retain all seventeen original production browser checks');
+  await check(
+    'Six same-source widgets dispatch bounded reads and keep polling while another source remains pending',
+    async () => {
+      // Persist genuine platform metadata. All responses still come from the
+      // packaged service: routes below only hold transport, never fulfill data.
+      const aIds = Array.from({ length: 6 }, (_, index) => `scheduler-a-${index + 1}`);
+      const widget = (id, deviceId, index) => ({
+        id, title: `TEST FIXTURE ${id}`, type: 'table',
+        binding: { mode: 'fixed', deviceIds: [deviceId], metricKey: 'pressure' },
+        grid: { x: 0, y: index * 3, w: 12, h: 3 },
+        unit: 'MPa', timeWindowSeconds: 300, aggregation: 'RAW',
+      });
+      const board = await api('/dashboards', 'POST', {
+        id: 0, name: 'TEST FIXTURE 多源并发与轮询（非现场）', version: 0, schemaVersion: 1,
+        widgets: [...aIds.map((id, index) => widget(id, devices[0].id, index)), widget('scheduler-b', peer.id, 6)],
+      });
+      const matcher = '**/admin-api/iot/query/realtime';
+      let releaseA, releaseB, aReleased = false, bReleased = false, cleaningUp = false;
+      let heldA = 0, heldB = 0, heldBSince = 0;
+      const aGate = new Promise((resolve) => { releaseA = resolve; });
+      const bGate = new Promise((resolve) => { releaseB = resolve; });
+      const starts = new WeakMap();
+      const aResponses = [], transportErrors = [];
+      const holdQueries = async (route) => {
+        const request = route.request();
+        const query = request.postDataJSON();
+        starts.set(request, Date.now());
+        if (query.deviceIds?.includes(peer.id)) {
+          assert.deepEqual(query.deviceIds, [peer.id], 'B must be scheduled independently, not grouped behind A');
+          heldB++;
+          heldBSince ||= Date.now();
+          await bGate;
+        } else if (query.deviceIds?.includes(devices[0].id) && !aReleased) {
+          heldA++;
+          await aGate;
+        }
+        try {
+          await route.continue();
+        } catch (error) {
+          if (!cleaningUp) transportErrors.push(String(error));
+        }
+      };
+      const observe = async (response) => {
+        const request = response.request();
+        if (!response.url().endsWith('/admin-api/iot/query/realtime') || !starts.has(request)) return;
+        const query = request.postDataJSON();
+        if (query.deviceIds?.length !== 1 || query.deviceIds[0] !== devices[0].id) return;
+        try {
+          const result = await response.json();
+          assert.equal(result.code, 0);
+          assert.equal(result.data.series[0].sourceId, 'source-a');
+          assert.equal(result.data.series[0].points[0].value, 10.25);
+          aResponses.push({ startedAt: starts.get(request), pointTime: result.data.series[0].points[0].time });
+        } catch (error) {
+          if (!cleaningUp) transportErrors.push(String(error));
+        }
+      };
+      // Leave the preceding live process page before installing gates, so a
+      // last process poll cannot contaminate the dashboard-only lane counts.
+      await page.getByRole('link', { name: '设备与测点', exact: true }).click();
+      await page.getByTestId('iot-new-device-source').waitFor();
+      await until(async () => (await page.getByTestId('harness-pending').innerText()) === '0', 'non-query workbench catalog is ready and process requests stopped');
+      await page.route(matcher, holdQueries);
+      page.on('response', observe);
+      try {
+        await page.getByRole('link', { name: '设备看板', exact: true }).click();
+        await until(async () => heldA >= 2 && heldB >= 1, 'independent A and B source lanes start');
+        // With six same-source widgets, only the two active lane slots may
+        // reach transport. The remaining four must wait in the UI scheduler.
+        await tick(300);
+        assert.equal(heldA, 2, 'No source pool/queue overload from a six-widget dashboard');
+        assert.equal(heldB, 1);
+        aReleased = true;
+        releaseA();
+        for (const id of aIds) {
+          const cell = page.getByTestId(`iot-widget-${id}`).locator('tbody tr').first();
+          await cell.waitFor();
+          assert.match(await cell.innerText(), /source-a/);
+          assert.equal((await cell.locator('td').nth(2).innerText()).trim(), '10.25');
+          assert.doesNotMatch(await page.getByTestId(`iot-widget-${id}`).innerText(), /SOURCE_BUSY|并发请求已满/);
+        }
+        await until(async () => aResponses.length >= 6, 'all six actual A reads completed');
+        const firstPollLatest = Math.max(...aResponses.slice(0, aIds.length).map((item) => Date.parse(item.pointTime)));
+        // Keep B unresolved beyond the declared ten-second poll interval. A
+        // must complete a new upstream read, not merely retain its old values.
+        await until(async () => aResponses.some((item) =>
+          item.startedAt >= heldBSince + 10_000 && Date.parse(item.pointTime) > firstPollLatest),
+        'healthy A independently polls again while B transport remains unresolved');
+        for (const id of aIds) {
+          const row = page.getByTestId(`iot-widget-${id}`).locator('tbody tr').first();
+          await row.waitFor();
+          assert.equal((await row.locator('td').nth(2).innerText()).trim(), '10.25');
+        }
+        assert.equal(bReleased, false);
+        assert.equal(heldB, 1, 'A polling must not cancel/restart B or duplicate B work');
+        assert.ok(Number(await page.getByTestId('harness-pending').innerText()) >= 1);
+        assert.equal(await page.getByTestId('iot-widget-scheduler-b').locator('tbody tr').count(), 0);
+        assert.ok(Date.now() - heldBSince >= 10_000);
+        await page.getByTestId('contract-fixture-banner').waitFor();
+        const filename = 'production-contract-source-scheduler.png';
+        await page.screenshot({ path: join(directory, filename), fullPage: true, animations: 'disabled' });
+        captures.push({ filename, commit, evidenceType: 'AUTOMATED_CONTRACT_FIXTURE', screenshotIncludesFixtureBanner: true });
+        const heldForMs = Date.now() - heldBSince;
+        bReleased = true;
+        releaseB();
+        const bRow = page.getByTestId('iot-widget-scheduler-b').locator('tbody tr').first();
+        await bRow.waitFor();
+        assert.match(await bRow.innerText(), /source-b/);
+        assert.equal((await bRow.locator('td').nth(2).innerText()).trim(), '1,010.25');
+        assert.deepEqual(transportErrors, []);
+        await writeFile(join(directory, 'source-scheduler-audit.json'), JSON.stringify({
+          commit, evidenceType: 'AUTOMATED_CONTRACT_FIXTURE', sameSourceWidgets: aIds.length,
+          initialSameSourceTransportConcurrency: heldA, blockedSource: 'source-b', heldForMs,
+          healthySource: 'source-a', actualReadResponses: aResponses,
+          healthyPolledWhileOtherPending: true, blockedSourceRecovered: true,
+          note: 'Browser transport delay only; all values/responses from actual packaged API and loopback vendor peers. Not site acceptance.',
+        }, null, 2) + '\n');
+        await page.locator('#unmount').click();
+        await page.getByTestId('harness-status').filter({ hasText: /^未挂载$/ }).waitFor();
+        await until(async () => (await page.getByTestId('harness-pending').innerText()) === '0', 'all source scheduler requests stop on unmount');
+        const stopped = requests.length;
+        await tick(10_500);
+        assert.equal(requests.length, stopped, 'No independent source polling after unmount, beyond the dashboard interval');
+      } finally {
+        cleaningUp = true;
+        aReleased = bReleased = true;
+        releaseA(); releaseB();
+        await page.unroute(matcher, holdQueries);
+        page.off('response', observe);
+        await api(`/dashboards/${board.id}?version=${board.version}`, 'DELETE');
+      }
+      await page.locator('#remount').click();
+      await page.getByTestId('harness-status').filter({ hasText: /^已挂载$/ }).waitFor();
+      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await ready('separation');
+    },
+  );
+
+  assert.ok(checks.length >= 24, 'Retain all seventeen original production browser checks');
   assert.deepEqual(
     errors,
     [],

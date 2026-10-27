@@ -9,6 +9,7 @@ import type {
   IotExport,
   IotAggregation,
   IotSource,
+  IotQuery,
 } from '@vben/micro-apps';
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import { normalizeIotError } from '@vben/micro-apps';
@@ -25,6 +26,7 @@ import {
 } from './model';
 import WidgetView from './WidgetView.vue';
 import SourceStatus from './SourceStatus.vue';
+import { createSourceScheduler, splitQueryBySource } from './source-scheduler';
 import {
   deviceSourceLabel,
   deviceSourceIssue,
@@ -89,10 +91,16 @@ const historyMetric = ref('temperature_out'),
   historyAggregation = ref<IotAggregation>('RAW'),
   historySeries = ref<IotSeries[]>([]),
   historyLoading = ref(false);
+const sourceScheduler = createSourceScheduler();
 let lifetime = new AbortController();
 let reads = new AbortController();
 let historyRequest: AbortController | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
+const sourceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function clearSourceTimers() {
+  for (const timeout of sourceTimers.values()) clearTimeout(timeout);
+  sourceTimers.clear();
+}
 let gestureCleanup: (() => void) | undefined;
 const bridge = computed(() => state.props.bridge?.iot);
 const currentMappings = computed(
@@ -141,6 +149,7 @@ function clearRequests() {
   reads.abort();
   historyRequest?.abort();
   clearTimeout(timer);
+  clearSourceTimers();
   gestureCleanup?.();
 }
 async function initialize() {
@@ -247,6 +256,7 @@ async function action(work: (signal: AbortSignal) => Promise<void>) {
 }
 async function refresh() {
   clearTimeout(timer);
+  clearSourceTimers();
   reads.abort();
   reads = new AbortController();
   const request = reads;
@@ -255,68 +265,150 @@ async function refresh() {
   const sessionSignal = lifetime.signal;
   sessionSignal.addEventListener('abort', cancel, { once: true });
   const api = bridge.value;
-  if (!api || sessionSignal.aborted) return;
+  if (!api || sessionSignal.aborted) {
+    sessionSignal.removeEventListener('abort', cancel);
+    return;
+  }
+  let independentPolling = false;
   try {
     if (route.path === '/downloads') {
       const list = await api.exports(signal);
       if (!signal.aborted) jobs.value = list;
     } else if (route.path === '/dashboards' && board.value) {
-      await Promise.all(
-        board.value.widgets.map(async (widget) => {
-          if (widget.type === 'image' && widget.binding.mode === 'multiple') {
-            series.value[widget.id] = [];
-            widgetErrors.value[widget.id] =
-              '图片热点仅支持当前或固定单设备；请修改绑定';
-            return;
-          }
-          const ids = bindingDevices(widget, currentDevice.value);
-          const missing =
-            ids.length === 0 ||
-            ids.some(
-              (id) =>
-                !mappings.value[id]?.some(
-                  (m) => m.metricKey === widget.binding.metricKey,
-                ),
-            );
-          if (missing) {
-            series.value[widget.id] = [];
-            widgetErrors.value[widget.id] = '缺少设备或指标映射；不会补零';
-            return;
-          }
-          try {
-            const history = ['line', 'bar', 'timeline'].includes(widget.type);
-            const result = await api.query(
-              history ? 'history' : 'realtime',
-              widgetQuery(widget, currentDevice.value, history),
-              signal,
-            );
-            if (!signal.aborted) {
-              series.value[widget.id] = production.value
-                ? productionSeries(result, devices.value).filter(
-                    (item) =>
-                      ids.includes(item.deviceId) &&
-                      item.metricKey === widget.binding.metricKey,
-                  )
+      independentPolling = true;
+      type ReadTask = { widget: IotWidget; query: IotQuery; history: boolean };
+      const groups = new Map<string, ReadTask[]>();
+      const accepted = new Map<string, Map<string, IotSeries[]>>();
+      const failures = new Map<string, Map<string, string[]>>();
+      const deviceId = currentDevice.value;
+      function publish(widgetId: string) {
+        if (signal.aborted) return;
+        series.value[widgetId] = [
+          ...(accepted.get(widgetId)?.values() ?? []),
+        ].flat();
+        widgetErrors.value[widgetId] = [
+          ...(failures.get(widgetId)?.values() ?? []),
+        ]
+          .flat()
+          .join('；');
+      }
+      for (const widget of board.value.widgets) {
+        series.value[widget.id] = [];
+        widgetErrors.value[widget.id] = '';
+        if (widget.type === 'image' && widget.binding.mode === 'multiple') {
+          widgetErrors.value[widget.id] =
+            '图片热点仅支持当前或固定单设备；请修改绑定';
+          continue;
+        }
+        const ids = bindingDevices(widget, deviceId);
+        if (
+          !ids.length ||
+          ids.some(
+            (id) =>
+              !mappings.value[id]?.some(
+                (mapping) => mapping.metricKey === widget.binding.metricKey,
+              ),
+          )
+        ) {
+          widgetErrors.value[widget.id] = '缺少设备或指标映射；不会补零';
+          continue;
+        }
+        const history = ['line', 'bar', 'timeline'].includes(widget.type);
+        // The first request window is captured once before splitting sources.
+        const query = widgetQuery(widget, deviceId, history);
+        const parts = production.value
+          ? splitQueryBySource(query, devices.value)
+          : new Map([['demo', query]]);
+        accepted.set(widget.id, new Map());
+        failures.set(widget.id, new Map());
+        for (const [sourceId, part] of parts) {
+          const tasks = groups.get(sourceId) ?? [];
+          tasks.push({ widget, query: part, history });
+          groups.set(sourceId, tasks);
+        }
+      }
+      async function pollSource(
+        sourceId: string,
+        tasks: ReadTask[],
+        initial = false,
+      ) {
+        if (signal.aborted) return;
+        await Promise.all(
+          tasks.map(async ({ widget, query: initialQuery, history }) => {
+            accepted.get(widget.id)!.delete(sourceId);
+            // Keep the last source failure visible until that source's own retry settles.
+            publish(widget.id);
+            try {
+              // Later source cycles own their fresh window; an unrelated slow
+              // source cannot freeze this source's next telemetry refresh.
+              const query = initial
+                ? initialQuery
+                : {
+                    ...widgetQuery(widget, deviceId, history),
+                    deviceIds: [...initialQuery.deviceIds],
+                  };
+              const result = await sourceScheduler.run(sourceId, signal, () =>
+                api!.query(history ? 'history' : 'realtime', query, signal),
+              );
+              if (signal.aborted) return;
+              const items = production.value
+                ? productionSeries(result, devices.value)
                 : result.series;
-              widgetErrors.value[widget.id] = sourceResultErrors(
-                result,
-                sources.value,
-              ).join('；');
+              accepted.get(widget.id)!.set(
+                sourceId,
+                items.filter(
+                  (item) =>
+                    query.deviceIds.includes(item.deviceId) &&
+                    query.metricKeys.includes(item.metricKey),
+                ),
+              );
+              failures
+                .get(widget.id)!
+                .set(sourceId, sourceResultErrors(result, sources.value));
+            } catch (cause) {
+              if (signal.aborted) return;
+              failures
+                .get(widget.id)!
+                .set(sourceId, [
+                  production.value
+                    ? `数据源 ${sourceLabel(sourceId, sources.value)}：${message(cause)}`
+                    : message(cause),
+                ]);
             }
-          } catch (cause) {
-            if (!signal.aborted) {
-              series.value[widget.id] = [];
-              widgetErrors.value[widget.id] = message(cause);
-            }
-          }
-        }),
-      );
+            publish(widget.id);
+          }),
+        );
+        if (signal.aborted) return;
+        sourceTimers.set(
+          sourceId,
+          setTimeout(() => {
+            if (signal.aborted) return;
+            sourceTimers.delete(sourceId);
+            void pollSource(sourceId, tasks);
+          }, 10000),
+        );
+      }
+      // Independent source cycles also keep initial page loading from waiting
+      // for an unrelated hung source. Each cycle still has at most two requests.
+      for (const [sourceId, tasks] of groups)
+        void pollSource(sourceId, tasks, true);
     }
   } catch (cause) {
     if (!signal.aborted) error.value = message(cause);
   } finally {
-    sessionSignal.removeEventListener('abort', cancel);
-    if (!signal.aborted && !sessionSignal.aborted)
+    if (!independentPolling || signal.aborted)
+      sessionSignal.removeEventListener('abort', cancel);
+    else
+      signal.addEventListener(
+        'abort',
+        () => sessionSignal.removeEventListener('abort', cancel),
+        { once: true },
+      );
+    if (
+      !signal.aborted &&
+      !sessionSignal.aborted &&
+      route.path !== '/dashboards'
+    )
       timer = setTimeout(() => void refresh(), 10000);
   }
 }
@@ -502,6 +594,10 @@ function deleteWidget(id: string) {
   if (board.value) {
     board.value.widgets = board.value.widgets.filter((w) => w.id !== id);
     dirty.value = true;
+    delete series.value[id];
+    delete widgetErrors.value[id];
+    // Source loops hold a generation snapshot; rebuild it when a widget leaves.
+    void refresh();
   }
 }
 function gesture(event: PointerEvent, widget: IotWidget, resize = false) {
@@ -607,19 +703,47 @@ async function runHistory() {
   error.value = '';
   try {
     const query = historyQuery();
-    const result = await bridge.value!.query('history', query, signal);
-    if (!signal.aborted) {
-      historySeries.value = (
-        production.value
-          ? productionSeries(result, devices.value)
-          : result.series
-      ).filter(
-        (item) =>
-          query.deviceIds.includes(item.deviceId) &&
-          query.metricKeys.includes(item.metricKey),
-      );
-      historyErrors.value = sourceResultErrors(result, sources.value);
-    }
+    const current = bridge.value!;
+    const groups = production.value
+      ? splitQueryBySource(query, devices.value)
+      : new Map([['demo', query]]);
+    const results = await Promise.all(
+      [...groups].map(async ([sourceId, group]) => {
+        try {
+          const result = await sourceScheduler.run(sourceId, signal, () =>
+            current.query('history', group, signal),
+          );
+          const accepted = production.value
+            ? productionSeries(result, devices.value)
+            : result.series;
+          return {
+            successful: true,
+            series: accepted.filter(
+              (item) =>
+                group.deviceIds.includes(item.deviceId) &&
+                group.metricKeys.includes(item.metricKey),
+            ),
+            errors: sourceResultErrors(result, sources.value),
+          };
+        } catch (cause) {
+          if (signal.aborted) throw cause;
+          return {
+            successful: false,
+            series: [],
+            errors: [
+              production.value
+                ? `数据源 ${sourceLabel(sourceId, sources.value)}：${message(cause)}`
+                : message(cause),
+            ],
+          };
+        }
+      }),
+    );
+    if (signal.aborted) return;
+    if (results.every((result) => !result.successful))
+      throw new Error(results.flatMap((result) => result.errors).join('；'));
+    historySeries.value = results.flatMap((result) => result.series);
+    historyErrors.value = results.flatMap((result) => result.errors);
   } catch (cause) {
     if (!signal.aborted) error.value = message(cause);
   } finally {

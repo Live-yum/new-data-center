@@ -750,4 +750,80 @@ describe('IoT workbench session, cancellation and conflict integration', () => {
     await settle();
     expect(widget.textContent).toContain('87');
   });
+  it('bounds more than four slow widgets to two requests per source and keeps A polling while mixed-widget B is held', async () => {
+    const board = dashboard();
+    board.widgets = Array.from({ length: 6 }, (_, index) => ({ ...structuredClone(board.widgets[0]!), id: `bounded-${index}`, title: `排队组件${index}`, binding: { mode: index === 0 ? 'multiple' as const : 'fixed' as const, deviceIds: index === 0 ? [1, 2] : [1], metricKey: mapping.metricKey } }));
+    const gates = Array.from({ length: 6 }, () => deferred<IotResult>()); const blockedB = deferred<IotResult>();
+    let callsA = 0, callsB = 0, activeA = 0, maximumA = 0;
+    const bridge = api({ devices: vi.fn(async () => namedDevices), sources: vi.fn(async () => sourceList), dashboards: vi.fn(async () => [board]), query: vi.fn(async (_mode, query) => {
+      if (query.deviceIds.includes(2)) { callsB++; return blockedB.promise; }
+      const index = callsA++; maximumA = Math.max(maximumA, ++activeA);
+      try { return index < 6 ? await gates[index]!.promise : { source: 'REALDB', series: [{ ...result(200 + index).series[0]!, sourceId: 'a' }] }; } finally { activeA--; }
+    }) });
+    await mount({ container, ...platformProps(bridge, '/dashboards') }); await settle();
+    expect(callsA).toBe(2); expect(callsB).toBe(1);
+    expect(container.querySelector('[data-testid="iot-widget-bounded-0"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('正在加载设备与看板');
+    for (let index = 0; index < 6; index++) { gates[index]!.resolve({ source: 'REALDB', series: [{ ...result(100 + index).series[0]!, sourceId: 'a' }] }); await settle(); }
+    expect(callsA).toBe(6); expect(maximumA).toBe(2);
+    for (let index = 0; index < 6; index++) expect(container.querySelector(`[data-testid="iot-widget-bounded-${index}"]`)!.textContent).toContain(String(100 + index));
+    await vi.advanceTimersByTimeAsync(10000); await settle();
+    expect(callsA).toBe(12); expect(callsB).toBe(1); expect(maximumA).toBe(2);
+    const mixed = container.querySelector('[data-testid="iot-widget-bounded-0"]')!;
+    expect(mixed.textContent).toContain('206');
+    blockedB.resolve({ source: 'REALDB', series: [{ ...result(909).series[0]!, deviceId: 2, sourceId: 'b' }] }); await settle();
+    expect(mixed.textContent).toContain('206'); expect(mixed.textContent).toContain('909');
+  });
+  it('cancels queued widget requests and independent source timers on route leave, including transports ignoring abort', async () => {
+    const board = dashboard(); board.widgets = Array.from({ length: 6 }, (_, index) => ({ ...structuredClone(board.widgets[0]!), id: `queued-${index}` }));
+    const gates = [deferred<IotResult>(), deferred<IotResult>()]; let calls = 0; const signals: AbortSignal[] = [];
+    const bridge = api({ devices: vi.fn(async () => namedDevices), sources: vi.fn(async () => sourceList), dashboards: vi.fn(async () => [board]), query: vi.fn((_mode, _query, signal) => { signals.push(signal); return gates[calls++]!.promise; }) });
+    await mount({ container, ...platformProps(bridge, '/dashboards') }); await settle(); expect(calls).toBe(2);
+    await update({ route: '/widgets' }); await settle(); expect(signals.every((signal) => signal.aborted)).toBe(true);
+    for (const gate of gates) gate.resolve({ source: 'REALDB', series: [{ ...result(999).series[0]!, sourceId: 'a' }] }); await settle();
+    await vi.advanceTimersByTimeAsync(30000); await settle(); expect(calls).toBe(2); expect(container.textContent).not.toContain('999');
+  });
+
+  it('retains a different source failure when the healthy half of a mixed widget refreshes again', async () => {
+    const board = dashboard(); board.widgets[0]!.binding = { mode: 'multiple', deviceIds: [1, 2], metricKey: mapping.metricKey };
+    const slowB = deferred<IotResult>(); const retryB = deferred<IotResult>(); let readsA = 0, readsB = 0;
+    const bridge = api({ devices: vi.fn(async () => namedDevices), sources: vi.fn(async () => sourceList), dashboards: vi.fn(async () => [board]), query: vi.fn(async (_mode, query) => {
+      if (query.deviceIds.includes(2)) { return ++readsB === 1 ? slowB.promise : retryB.promise; }
+      return { source: 'REALDB', series: [{ ...result(++readsA === 1 ? 41 : 52).series[0]!, sourceId: 'a' }] };
+    }) });
+    await mount({ container, ...platformProps(bridge, '/dashboards') }); await settle();
+    await vi.advanceTimersByTimeAsync(5000);
+    slowB.resolve({ source: 'REALDB', partial: true, series: [], errors: [{ sourceId: 'b', code: 'SOURCE_UNAVAILABLE', message: '乙源仍不可用' }] }); await settle();
+    await vi.advanceTimersByTimeAsync(5000); await settle();
+    const widget = container.querySelector('[data-testid="iot-widget-temperature"]')!;
+    expect(readsA).toBe(2); expect(readsB).toBe(1); expect(widget.textContent).toContain('52'); expect(widget.textContent).toContain('现场源b [b]：乙源仍不可用');
+    await vi.advanceTimersByTimeAsync(10000); await settle();
+    expect(readsA).toBe(3); expect(readsB).toBe(2); expect(widget.textContent).toContain('现场源b [b]：乙源仍不可用');
+    retryB.resolve({ source: 'REALDB', series: [{ ...result(90).series[0]!, deviceId: 2, sourceId: 'b' }] }); await settle();
+    expect(widget.textContent).not.toContain('乙源仍不可用'); expect(widget.textContent).toContain('52'); expect(widget.textContent).toContain('90');
+  });
+
+  it('rebuilds source cycles after deleting a queued widget so it is never dispatched or republished', async () => {
+    const board = dashboard(); board.widgets = Array.from({ length: 3 }, (_, index) => ({ ...structuredClone(board.widgets[0]!), id: `delete-${index}`, binding: { ...board.widgets[0]!.binding, metricKey: index === 2 ? 'deleted_point' : mapping.metricKey } }));
+    const gates = [deferred<IotResult>(), deferred<IotResult>()]; let calls = 0; const keys: string[] = [];
+    const bridge = api({ devices: vi.fn(async () => namedDevices), sources: vi.fn(async () => sourceList), dashboards: vi.fn(async () => [board]), mappings: vi.fn(async () => [mapping, { ...mapping, metricKey: 'deleted_point' }]), query: vi.fn(async (_mode, query) => { keys.push(query.metricKeys[0]!); const index = calls++; return index < 2 ? gates[index]!.promise : { source: 'REALDB', series: [{ ...result(87).series[0]!, sourceId: 'a' }] }; }) });
+    await mount({ container, ...platformProps(bridge, '/dashboards') }); await settle(); expect(calls).toBe(2);
+    button('iot-edit').click(); await settle(); const removed = container.querySelector('[data-testid="iot-widget-delete-2"]')!;
+    Array.from(removed.querySelectorAll('button')).find((node) => node.textContent?.trim() === '移除')!.click(); await settle();
+    for (const gate of gates) gate.resolve({ source: 'REALDB', series: [{ ...result(999).series[0]!, sourceId: 'a' }] }); await settle();
+    await vi.advanceTimersByTimeAsync(10000); await settle();
+    expect(keys).not.toContain('deleted_point'); expect(container.querySelector('[data-testid="iot-widget-delete-2"]')).toBeNull(); expect(container.textContent).not.toContain('999');
+  });
+  it('shares old live slots with manual history and removes history cancelled while queued after navigation', async () => {
+    const board = dashboard(); board.widgets = Array.from({ length: 2 }, (_, index) => ({ ...structuredClone(board.widgets[0]!), id: `history-budget-${index}` }));
+    const gates = [deferred<IotResult>(), deferred<IotResult>()]; let liveReads = 0, historyReads = 0;
+    const bridge = api({ devices: vi.fn(async () => namedDevices), sources: vi.fn(async () => sourceList), dashboards: vi.fn(async () => [board]), query: vi.fn(async (mode) => { if (mode === 'history') { historyReads++; return { source: 'REALDB', series: [{ ...result(87).series[0]!, sourceId: 'a' }] }; } return gates[liveReads++]!.promise; }) });
+    await mount({ container, ...platformProps(bridge, '/dashboards') }); await settle(); expect(liveReads).toBe(2);
+    await update({ route: '/history' }); await settle(); button('iot-history-run').click(); await settle(); expect(historyReads).toBe(0);
+    button('iot-history-cancel').click(); await settle();
+    for (const gate of gates) gate.resolve({ source: 'REALDB', series: [{ ...result(999).series[0]!, sourceId: 'a' }] }); await settle();
+    expect(historyReads).toBe(0); button('iot-history-run').click(); await settle(); expect(historyReads).toBe(1);
+    expect(container.querySelector('[data-testid="iot-history-results"]')!.textContent).toContain('87');
+  });
+
 });

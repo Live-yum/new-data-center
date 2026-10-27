@@ -13,6 +13,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { dataCenterKey } from '../context';
 import ProcessDiagram from './ProcessDiagram.vue';
 import SourceStatus from './SourceStatus.vue';
+import { createSourceScheduler } from './source-scheduler';
 import {
   deviceSourceId,
   deviceSourceLabel,
@@ -69,7 +70,7 @@ const selectedSlot = ref('slot-1');
 const metricKey = ref('');
 const live = ref<IotSeries[]>([]);
 const liveErrors = ref<Record<number, string>>({});
-const liveLoading = ref(false);
+const liveLoading = ref<Record<number, boolean>>({});
 const lastRead = ref('');
 const history = ref<IotSeries[]>([]);
 const lastHistoryQuery = ref<IotQuery>();
@@ -81,10 +82,11 @@ const historyDisplay = ref<'line' | 'timeline'>('line');
 const exportNotice = ref('');
 const now = ref(Date.now());
 const diagramScroll = ref<HTMLElement>();
+const sourceScheduler = createSourceScheduler();
 let lifetime = new AbortController();
 let liveRequest: AbortController | undefined;
 let historyRequest: AbortController | undefined;
-let liveTimer: ReturnType<typeof setTimeout> | undefined;
+const liveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let liveEpoch = 0;
 let historyEpoch = 0;
 let selectionEpoch = 0;
@@ -140,8 +142,9 @@ function message(cause: unknown) {
 function stopLive() {
   liveEpoch++;
   liveRequest?.abort();
-  clearTimeout(liveTimer);
-  liveLoading.value = false;
+  for (const timeout of liveTimers.values()) clearTimeout(timeout);
+  liveTimers.clear();
+  liveLoading.value = {};
 }
 function stopHistory() {
   historyEpoch++;
@@ -416,7 +419,7 @@ function reading(
         (!mapping || !devices.value.some((item) => item.id === id)),
       failed:
         id !== null && (!!liveErrors.value[id] || !!mappingErrors.value[id]),
-      loading: liveLoading.value,
+      loading: id !== null && !!liveLoading.value[id],
     },
   );
 }
@@ -472,25 +475,34 @@ async function refreshLive() {
     keys.forEach((key) => set.add(key));
     requests.set(slot.deviceId, set);
   }
-  if (requests.size === 0) return;
-  async function poll() {
+  const sourceRequests = new Map<string, [number, Set<string>][]>();
+  for (const request of requests) {
+    const sourceId = deviceSourceId(
+      devices.value.find((item) => item.id === request[0]),
+    );
+    const group = sourceRequests.get(sourceId) ?? [];
+    group.push(request);
+    sourceRequests.set(sourceId, group);
+  }
+  async function poll(sourceId: string, group: [number, Set<string>][]) {
     if (controller.signal.aborted || version !== liveEpoch) return;
-    liveLoading.value = true;
     await Promise.all(
-      [...requests].map(async ([id, keys]) => {
+      group.map(async ([id, keys]) => {
+        liveLoading.value[id] = true;
         try {
-          // Each device has its own mappings. Bound each request to the API's
-          // 20-metric limit even when several slots share the same device.
+          // Source-aware queueing covers every per-device 20-metric batch.
           const metricKeys = [...keys];
           const batches: string[][] = [];
           for (let offset = 0; offset < metricKeys.length; offset += 20)
             batches.push(metricKeys.slice(offset, offset + 20));
           const results = await Promise.all(
             batches.map((batch) =>
-              current!.query(
-                'realtime',
-                { deviceIds: [id], metricKeys: batch, aggregation: 'RAW' },
-                controller.signal,
+              sourceScheduler.run(sourceId, controller.signal, () =>
+                current!.query(
+                  'realtime',
+                  { deviceIds: [id], metricKeys: batch, aggregation: 'RAW' },
+                  controller.signal,
+                ),
               ),
             ),
           );
@@ -513,14 +525,23 @@ async function refreshLive() {
           if (controller.signal.aborted || version !== liveEpoch) return;
           live.value = live.value.filter((item) => item.deviceId !== id);
           liveErrors.value[id] = message(error);
+        } finally {
+          if (!controller.signal.aborted && version === liveEpoch)
+            liveLoading.value[id] = false;
         }
       }),
     );
     if (controller.signal.aborted || version !== liveEpoch) return;
-    liveLoading.value = false;
-    liveTimer = setTimeout(() => void poll(), page!.refreshSeconds * 1000);
+    liveTimers.set(
+      sourceId,
+      setTimeout(() => {
+        if (controller.signal.aborted || version !== liveEpoch) return;
+        liveTimers.delete(sourceId);
+        void poll(sourceId, group);
+      }, page!.refreshSeconds * 1000),
+    );
   }
-  await poll();
+  for (const [sourceId, group] of sourceRequests) void poll(sourceId, group);
 }
 function buildHistoryQuery(): IotQuery | undefined {
   const slot = binding.value;
@@ -572,7 +593,12 @@ async function refreshHistory() {
     const query = buildHistoryQuery();
     if (!query) return;
     historyLoading.value = true;
-    const result = await current.query('history', query, controller.signal);
+    const sourceId = deviceSourceId(
+      devices.value.find((item) => item.id === query.deviceIds[0]),
+    );
+    const result = await sourceScheduler.run(sourceId, controller.signal, () =>
+      current.query('history', query, controller.signal),
+    );
     if (controller.signal.aborted || version !== historyEpoch) return;
     const accepted = productionSeries(result, devices.value);
     const failures = sourceResultErrors(result, sources.value);
@@ -1193,7 +1219,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="pr-card-actions">
               <button
-                :disabled="editing || liveLoading || busy"
+                :disabled="editing || busy"
                 data-testid="production-live-refresh"
                 @click="refreshLive"
               >
@@ -1272,6 +1298,7 @@ onBeforeUnmount(() => {
                 查询</button
               ><button
                 v-if="historyLoading"
+                data-testid="production-history-cancel"
                 @click="
                   stopHistory();
                   history = [];

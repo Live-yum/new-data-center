@@ -537,6 +537,8 @@ jobs:
           test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-cross-source-history.csv"
           test -s "$PRODUCTION_TEST_ARTIFACT_DIR/cross-source-snapshot-history.csv"
           test -s "$PRODUCTION_TEST_ARTIFACT_DIR/multi-source-api-audit.json"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/source-scheduler-audit.json"
+          test -s "$PRODUCTION_TEST_ARTIFACT_DIR/production-contract-source-scheduler.png"
       - name: Require complete multi-source evidence for this exact commit
         run: |
           python3 - <<'PYVERIFY'
@@ -544,7 +546,7 @@ jobs:
           from pathlib import Path
           root = Path(os.environ['PRODUCTION_TEST_ARTIFACT_DIR'])
           counts = {}
-          for filename, minimum in [('production-api-verification.json', 15), ('production-browser-verification.json', 23)]:
+          for filename, minimum in [('production-api-verification.json', 15), ('production-browser-verification.json', 24)]:
               evidence = json.loads((root / filename).read_text())
               assert evidence['passed'] is True and evidence['failure'] is None, evidence
               assert evidence['commit'] == os.environ['GITHUB_SHA'], 'Evidence must match the packaged/tested revision'
@@ -563,6 +565,12 @@ jobs:
                   assert peer['sourceId'] == source
                   reads = [entry for entry in peer['requests'] if entry['path'].startswith('/api/')]
                   assert reads and all(entry['sourceId'] == source and entry['method'] == 'GET' and entry['authenticated'] for entry in reads)
+          scheduler = json.loads((root / 'source-scheduler-audit.json').read_text())
+          assert scheduler['commit'] == os.environ['GITHUB_SHA']
+          assert scheduler['evidenceType'] == 'AUTOMATED_CONTRACT_FIXTURE'
+          assert scheduler['sameSourceWidgets'] > 4 and scheduler['initialSameSourceTransportConcurrency'] <= 2
+          assert scheduler['healthyPolledWhileOtherPending'] and scheduler['blockedSourceRecovered']
+          assert scheduler['heldForMs'] >= 10000 and len(scheduler['actualReadResponses']) > scheduler['sameSourceWidgets']
           summary = ('## Multi-source production-path contracts — TEST FIXTURE, NOT site acceptance\n\n'
                      + '\n'.join(f'- {name}: {count} passed checks' for name, count in counts.items())
                      + '\n- Two independent named loopback peers, distinct credentials and identical point names; real packaged service, tenant/auth filters and PostgreSQL.\n'

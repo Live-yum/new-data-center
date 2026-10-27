@@ -789,4 +789,52 @@ describe('production process page lifecycle and read-only bindings', () => {
     await select('production-node', 'slot-2');
     expect(reading('flow').textContent).toContain('87');
   });
+  it('bounds each source live queue and keeps healthy source polling while another source remains unresolved', async () => {
+    const page = configuredScene(); page.refreshSeconds = 5;
+    const devices = [2701, 7302, 9403, 9404].map((id, index) => ({ id, name: `排队设备${index}`, code: `QUEUE-${index}`, sourceId: index === 3 ? 'b' : 'a' }));
+    page.bindings = devices.map((device, index) => ({ slotId: `slot-${index + 1}`, deviceId: device.id, metricKeys: ['pressure'], primaryMetricKey: 'pressure' }));
+    const gates = Array.from({ length: 3 }, () => deferred<IotResult>()); const blockedB = deferred<IotResult>();
+    let callsA = 0, callsB = 0, active = 0, maximum = 0;
+    function data(query: IotQuery, value: number) { const response = result(query, value); response.series.forEach((item) => { item.sourceId = devices.find((device) => device.id === item.deviceId)!.sourceId; }); return response; }
+    const api = fixture([page], { devices: vi.fn(async () => devices), sources: vi.fn(async () => namedSources), mappings: vi.fn(async () => [mappingList[2701]![0]!]), query: vi.fn(async (mode, query) => {
+      if (mode === 'history') return data(query, 10);
+      if (query.deviceIds[0] === 9404) { callsB++; return blockedB.promise; }
+      const index = callsA++; maximum = Math.max(maximum, ++active);
+      try { return index < 3 ? await gates[index]!.promise : data(query, 200 + index); } finally { active--; }
+    }) });
+    await mount(props(api)); await settle(); expect(callsA).toBe(2); expect(callsB).toBe(1);
+    for (let index = 0; index < 3; index++) { gates[index]!.resolve(data({ deviceIds: [devices[index]!.id], metricKeys: ['pressure'], aggregation: 'RAW' }, 100 + index)); await settle(); }
+    expect(callsA).toBe(3); expect(maximum).toBe(2); expect(reading('pressure').textContent).toContain('100');
+    expect(get<HTMLButtonElement>('production-live-refresh').disabled).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000); await settle();
+    expect(callsA).toBe(6); expect(callsB).toBe(1); expect(maximum).toBe(2); expect(reading('pressure').textContent).toContain('203');
+    await unmount(); const count = callsA; blockedB.resolve(data({ deviceIds: [9404], metricKeys: ['pressure'], aggregation: 'RAW' }, 999)); await settle();
+    await vi.advanceTimersByTimeAsync(15000); expect(callsA).toBe(count);
+  });
+
+  it('shares the same two-request budget between four live device reads and automatic history', async () => {
+    const page = configuredScene();
+    const devices = [2701, 7302, 9403, 9404].map((id, index) => ({ id, name: `预算设备${index}`, code: `BUDGET-${index}`, sourceId: 'a' }));
+    page.bindings = devices.map((device, index) => ({ slotId: `slot-${index + 1}`, deviceId: device.id, metricKeys: ['pressure'], primaryMetricKey: 'pressure' }));
+    const gates = Array.from({ length: 4 }, () => deferred<IotResult>()); let reads = 0, historyReads = 0, active = 0, maximum = 0;
+    function data(query: IotQuery) { const response = result(query, 61); response.series.forEach((item) => { item.sourceId = 'a'; }); return response; }
+    const api = fixture([page], { devices: vi.fn(async () => devices), sources: vi.fn(async () => [namedSources[0]!]), mappings: vi.fn(async () => [mappingList[2701]![0]!]), query: vi.fn(async (mode, query) => {
+      maximum = Math.max(maximum, ++active);
+      try { if (mode === 'history') { historyReads++; return data(query); } return await gates[reads++]!.promise; } finally { active--; }
+    }) });
+    await mount(props(api)); await settle(); expect(reads).toBe(2); expect(historyReads).toBe(0);
+    for (let index = 0; index < 4; index++) { gates[index]!.resolve(data({ deviceIds: [devices[index]!.id], metricKeys: ['pressure'], aggregation: 'RAW' })); await settle(); }
+    expect(reads).toBe(4); expect(historyReads).toBe(1); expect(maximum).toBe(2);
+    expect(get('production-trend').querySelector('svg')).not.toBeNull(); expect(container.textContent).not.toContain('SOURCE_BUSY');
+  });
+  it('removes a cancelled queued history request before the live requests release their shared source slots', async () => {
+    const gates = [deferred<IotResult>(), deferred<IotResult>()]; let liveReads = 0, historyReads = 0;
+    const api = fixture(undefined, { query: vi.fn(async (mode, query) => { if (mode === 'history') { historyReads++; return result(query); } return gates[liveReads++]!.promise; }) });
+    await mount(props(api)); await settle(); expect(liveReads).toBe(2); expect(historyReads).toBe(0);
+    await click('production-history-cancel');
+    gates[0]!.resolve(result({ deviceIds: [2701], metricKeys: ['pressure'], aggregation: 'RAW' }));
+    gates[1]!.resolve(result({ deviceIds: [7302], metricKeys: ['flow'], aggregation: 'RAW' })); await settle();
+    expect(historyReads).toBe(0); expect(get('production-trend').textContent).toContain('历史查询已取消');
+  });
+
 });

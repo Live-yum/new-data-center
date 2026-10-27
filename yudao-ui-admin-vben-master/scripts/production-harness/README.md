@@ -44,7 +44,7 @@ this does not validate the formal login screen or the deployment gateway.
 ## Coverage and evidence
 
 The suite retains **all 7 original packaged API checks and 17 browser checks**,
-then adds named-source checks. Minimum totals are **15 API + 23 browser checks**;
+then adds named-source checks. Minimum totals are **15 API + 24 browser checks**;
 9 independent fixture-unit checks verify the peers themselves, not the app.
 The unrelated frontend, demo, Java and PostgreSQL regressions remain required.
 
@@ -75,6 +75,10 @@ Additional browser coverage:
   disabled/outage states preserve the healthy source without invented values.
 - Cross-source history retains healthy rows with a labelled partial error;
   recovered rows keep their identities. CSV downloads show source summaries.
+- Six same-source dashboard widgets admit only two simultaneous reads, then all
+  render real results. A browser transport-only hold leaves B unresolved beyond
+  the ten-second poll interval while A completes a new timestamped upstream
+  read. Releasing B yields its own value; unmount stops both source loops.
 - Cancel, tenant replacement and unmount/remount discard old multi-source
   requests, selections and late results; original polling/route guards remain.
 

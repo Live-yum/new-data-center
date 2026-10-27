@@ -42,7 +42,7 @@ public class IotQueryService {
         List<Series> series = new ArrayList<>();
         for (Binding b : bindings) {
             JsonNode item = items.get(b.mapping.pointName());
-            Point point = item == null ? new Point(receivedAt, null, "MISSING") : point(item, receivedAt);
+            Point point = item == null ? new Point(receivedAt, null, "MISSING", "RECEIVED") : point(item, receivedAt);
             series.add(new Series(b.deviceId, b.mapping.metricKey(), b.mapping.unit(), List.of(point)));
         }
         return new QueryResult("REALDB", series);
@@ -162,7 +162,7 @@ public class IotQueryService {
             if (fallbackTime == null) throw unsupported();
             time = fallbackTime;
         }
-        return new Point(time, value, quality);
+        return new Point(time, value, quality, item.hasNonNull("time") ? "DEVICE" : "RECEIVED");
     }
 
     private Instant instant(String time) {

@@ -14,6 +14,7 @@ import cn.iocoder.yudao.framework.web.config.WebProperties;
 import cn.iocoder.yudao.framework.web.core.handler.GlobalExceptionHandler;
 import cn.iocoder.yudao.framework.web.core.util.WebFrameworkUtils;
 import cn.iocoder.yudao.module.iot.controller.admin.IotController;
+import cn.iocoder.yudao.module.iot.controller.admin.IotProcessController;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -43,6 +44,9 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** Real controller + real token and tenant filters; only remote services/repositories are mocked. */
@@ -107,6 +111,50 @@ class IotControllerSecurityTest {
         });
     }
 
+    @Test
+    void sourcesAndProcessPagesRequireAuthenticationAndExistingPermissions() {
+        runner.run(context -> {
+            for (String path : List.of("/sources", "/process-pages", "/process-pages/1")) {
+                mvc(context).perform(get("/admin-api/iot"+path).servletPath("/admin-api/iot"+path)
+                                .header("tenant-id","7").header("login-user",FORGED_USER))
+                        .andExpect(status().isUnauthorized());
+                mvc(context).perform(get("/admin-api/iot"+path).servletPath("/admin-api/iot"+path)
+                                .header("tenant-id","7").header("Authorization","Bearer valid-token"))
+                        .andExpect(status().isForbidden());
+            }
+            verifyNoInteractions(context.getBean(IotSourceService.class),context.getBean(IotProcessRepository.class));
+        });
+    }
+
+    @Test
+    void processReadPermissionDoesNotAllowConfiguration() {
+        runner.run(context -> {
+            when(context.getBean(SecurityFrameworkService.class).hasPermission("iot:dashboard:query")).thenReturn(true);
+            for (MockHttpServletRequestBuilder request : List.of(post("/admin-api/iot/process-pages"),
+                    put("/admin-api/iot/process-pages/1"), delete("/admin-api/iot/process-pages/1?version=0"))) {
+                mvc(context).perform(request.header("tenant-id","7").header("Authorization","Bearer valid-token")
+                                .contentType("application/json").content("{}"))
+                        .andExpect(status().isForbidden());
+            }
+            verifyNoInteractions(context.getBean(IotProcessRepository.class));
+        });
+    }
+
+    @Test
+    void processReadUsesVerifiedTenantAndCannotSelectForeignTenant() {
+        runner.run(context -> {
+            when(context.getBean(SecurityFrameworkService.class).hasPermission("iot:dashboard:query")).thenReturn(true);
+            mvc(context).perform(get("/admin-api/iot/process-pages").servletPath("/admin-api/iot/process-pages")
+                            .header("tenant-id","7").header("Authorization","Bearer valid-token").header("login-user",FORGED_USER))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(0));
+            verify(context.getBean(IotProcessRepository.class)).list(7L);
+            mvc(context).perform(get("/admin-api/iot/process-pages").servletPath("/admin-api/iot/process-pages")
+                            .header("tenant-id","999").header("Authorization","Bearer valid-token"))
+                    .andExpect(jsonPath("$.code").value(403));
+            verifyNoMoreInteractions(context.getBean(IotProcessRepository.class));
+        });
+    }
+
     private static MockHttpServletRequestBuilder request() {
         return get("/admin-api/iot/devices").servletPath("/admin-api/iot/devices").header("tenant-id", "7");
     }
@@ -120,14 +168,16 @@ class IotControllerSecurityTest {
     @EnableMethodSecurity
     @EnableWebMvc
     @EnableConfigurationProperties(SecurityProperties.class)
-    @Import(IotController.class)
+    @Import({IotController.class,IotProcessController.class})
     static class TestConfiguration implements WebMvcConfigurer {
         @Override public void configurePathMatch(PathMatchConfigurer configurer) {
-            configurer.addPathPrefix("/admin-api", type -> type == IotController.class);
+            configurer.addPathPrefix("/admin-api", type -> type == IotController.class || type == IotProcessController.class);
         }
         @Bean IotRepository repository() { return mock(IotRepository.class); }
         @Bean IotQueryService query() { return mock(IotQueryService.class); }
         @Bean IotExportService exports() { return mock(IotExportService.class); }
+        @Bean IotProcessRepository pages() { return mock(IotProcessRepository.class); }
+        @Bean IotSourceService sources() { return mock(IotSourceService.class); }
         @Bean(name = "ss") SecurityFrameworkService permissions() { return mock(SecurityFrameworkService.class); }
         @Bean WebFrameworkUtils webUtils() { return new WebFrameworkUtils(new WebProperties()); }
         @Bean OAuth2TokenCommonApi tokens() {

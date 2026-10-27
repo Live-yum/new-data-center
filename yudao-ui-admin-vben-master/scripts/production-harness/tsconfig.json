@@ -1,0 +1,12 @@
+{
+  "extends": "../../internal/tsconfig/web.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@vben/micro-apps": ["../../packages/micro-apps/src/index.ts"],
+      "qiankun": ["../../apps/web-micro-demo/node_modules/qiankun"],
+      "vue-router": ["../../apps/web-micro-demo/node_modules/vue-router"]
+    }
+  },
+  "include": ["main.ts", "vite.config.ts"]
+}

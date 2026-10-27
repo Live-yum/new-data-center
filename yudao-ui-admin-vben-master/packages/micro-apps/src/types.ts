@@ -32,12 +32,20 @@ export type DataCenterProps = {
   bridge?: DataCenterBridge;
   container?: HTMLElement;
   context?: DataCenterContext;
-  onNavigate?: (path: string) => void;
+  onNavigate?: (path: string, options?: { replace?: boolean }) => void;
+  /** Child-owned unsaved-edit guard, invoked only for voluntary host navigation. */
+  registerLeaveGuard?: (guard: (() => boolean) | undefined) => void;
   route?: string;
 };
 
 const dataCenterRoutes = new Set([
   '/overview',
+  '/sources',
+  '/process-separation',
+  '/process-gas',
+  '/process-storage',
+  '/process-utilities',
+  '/process-offshore',
   '/demo-separation',
   '/demo-gas',
   '/demo-storage',

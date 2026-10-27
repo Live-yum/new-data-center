@@ -56,7 +56,13 @@ export interface IotSeries {
   deviceId: number;
   metricKey: string;
   unit: string;
-  points: { time: string; value: number | string | null; quality: string }[];
+  points: {
+    time: string;
+    value: number | string | null;
+    quality: string;
+    /** Absent on older servers. RECEIVED is not proof of measurement freshness. */
+    timeSource?: 'DEVICE' | 'RECEIVED';
+  }[];
 }
 export interface IotResult {
   source: string;
@@ -69,7 +75,54 @@ export interface IotExport {
   expiresAt: string;
   error?: string;
 }
+/** Persisted production process view; templates contain no telemetry or device IDs. */
+export type IotProcessTemplate =
+  | 'separation'
+  | 'gas'
+  | 'storage'
+  | 'utilities'
+  | 'offshore';
+export interface IotProcessScene {
+  id: number;
+  name: string;
+  description?: string;
+  version: number;
+  schemaVersion: 1;
+  template: IotProcessTemplate;
+  bindings: {
+    slotId: string;
+    deviceId: number | null;
+    metricKeys: string[];
+    primaryMetricKey: string;
+  }[];
+  refreshSeconds: number;
+  staleAfterSeconds: number;
+}
+/** Deployment readiness only. CONFIGURED never asserts a successful live connection. */
+export interface IotSource {
+  id: string;
+  name: string;
+  type: 'REALDB';
+  enabled: boolean;
+  configured: boolean;
+  status: 'CONFIGURED' | 'DISABLED' | 'NOT_CONFIGURED';
+  timeZone: string;
+  description: string;
+}
 export interface IotBridge {
+  sources?(signal: AbortSignal): Promise<IotSource[]>;
+  processScenes?(signal: AbortSignal): Promise<IotProcessScene[]>;
+  processScene?(id: number, signal: AbortSignal): Promise<IotProcessScene>;
+  saveProcessScene?(
+    value: IotProcessScene,
+    signal: AbortSignal,
+  ): Promise<IotProcessScene>;
+  deleteProcessScene?(
+    id: number,
+    version: number,
+    signal: AbortSignal,
+  ): Promise<unknown>;
+
   /** Optional read-only demonstration capability. Never provided by the production bridge. */
   demoOilgasQuery?: (
     mode: 'realtime' | 'history',

@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class IotRepositoryTest {
- protected DriverManagerDataSource source; protected JdbcTemplate db; protected IotRepository repo; protected IotExportService exports; protected IotQueryService query;
+ protected DriverManagerDataSource source; protected JdbcTemplate db; protected IotRepository repo; protected IotExportService exports; protected IotQueryService query; protected IotProcessRepository pages;
  protected String url() { return "jdbc:h2:mem:iot"+UUID.randomUUID()+";MODE=PostgreSQL;DB_CLOSE_DELAY=-1"; }
  protected String username() { return "sa"; }
  protected String password() { return ""; }
@@ -23,10 +23,13 @@ public class IotRepositoryTest {
   db=new JdbcTemplate(source);
   String ddl=Files.readString(Path.of("../sql/postgresql/upgrade/20261026_iot.sql"));
   for(String statement:ddl.split(";")) if(!statement.isBlank()) db.execute(statement);
+  String processDdl=Files.readString(Path.of("../sql/postgresql/upgrade/20261027_iot_process.sql"));
+  for(String statement:processDdl.split(";")) if(!statement.isBlank()) db.execute(statement);
   // Dedicated test database only. Never run against a real business DB.
-  db.update("DELETE FROM iot_export");db.update("DELETE FROM iot_export_owner"); db.update("DELETE FROM iot_mapping");db.update("DELETE FROM iot_dashboard");db.update("DELETE FROM iot_device");
+  db.update("DELETE FROM iot_process_page");db.update("DELETE FROM iot_process_tenant");db.update("DELETE FROM iot_export");db.update("DELETE FROM iot_export_owner"); db.update("DELETE FROM iot_mapping");db.update("DELETE FROM iot_dashboard");db.update("DELETE FROM iot_device");
   ObjectMapper json=new ObjectMapper().findAndRegisterModules();
   repo=new IotRepository(db,json);query=mock(IotQueryService.class);exports=new IotExportService(db,json,query,repo);
+  pages=new IotProcessRepository(db,json,repo);
  }
  protected Dashboard dashboard(long version) { return new Dashboard(null,"Pump",version,1,List.of()); }
  protected Device device() { return repo.createDevice(11,new DeviceInput("Pump","P1")); }
@@ -104,5 +107,90 @@ public class IotRepositoryTest {
   Device d=device();assertThrows(ServiceException.class,()->exports.create(12,7,request(d.id())));
   for(int i=0;i<3;i++) exports.create(11,7,request(d.id()));
   assertThrows(ServiceException.class,()->exports.create(11,7,request(d.id())));
+ }
+ protected ProcessScene process(long version, Long deviceId, List<String> metrics, String primary) {
+  return new ProcessScene(null,"现场工艺",null,version,1,"separation",List.of(
+    new ProcessBinding("slot-1",deviceId,metrics,primary),
+    new ProcessBinding("slot-2",null,List.of(),""),new ProcessBinding("slot-3",null,List.of(),""),
+    new ProcessBinding("slot-4",null,List.of(),"")),5,120);
+ }
+ @Test void processDraftPersistsWithoutManufacturingDeviceData() {
+  ProcessScene saved=pages.save(11,null,process(0,null,List.of(),""));
+  assertNotNull(saved.id());assertEquals("",saved.description());assertEquals(0,saved.version());
+  assertEquals(saved,pages.get(11,saved.id()));assertEquals(1,pages.list(11).size());
+  assertTrue(repo.devices(11).isEmpty());assertTrue(repo.dashboards(11,false).isEmpty());
+  verifyNoInteractions(query);
+ }
+ @Test void processVersionConflictAndTenantIsolation() {
+  ProcessScene saved=pages.save(11,null,process(0,null,List.of(),""));
+  assertTrue(pages.list(12).isEmpty());assertThrows(ServiceException.class,()->pages.get(12,saved.id()));
+  assertThrows(ServiceException.class,()->pages.save(12,saved.id(),process(0,null,List.of(),"")));
+  assertThrows(ServiceException.class,()->pages.delete(12,saved.id(),0));
+  assertEquals(1,pages.save(11,saved.id(),process(0,null,List.of(),"")).version());
+  ServiceException conflict=assertThrows(ServiceException.class,()->pages.save(11,saved.id(),process(0,null,List.of(),"")));
+  assertEquals(1_070_000_409,conflict.getCode());
+  assertThrows(ServiceException.class,()->pages.delete(11,saved.id(),0));
+  assertTrue(pages.delete(11,saved.id(),1));assertTrue(pages.list(11).isEmpty());
+  assertThrows(ServiceException.class,()->pages.list(0));
+ }
+ @Test void processBindingsMustBeTenantDevicesWithExistingMappedMetrics() {
+  Device d=device();repo.replaceMappings(11,d.id(),List.of(new Mapping("temperature","温度","P1.PV","C")));
+  assertThrows(ServiceException.class,()->pages.save(12,null,process(0,d.id(),List.of("temperature"),"temperature")));
+  assertThrows(ServiceException.class,()->pages.save(11,null,process(0,d.id(),List.of("pressure"),"pressure")));
+  assertThrows(ServiceException.class,()->pages.save(11,null,process(0,d.id()+1000,List.of("temperature"),"temperature")));
+  ProcessScene saved=pages.save(11,null,process(0,d.id(),List.of("temperature"),"temperature"));
+  assertEquals(d.id(),saved.bindings().get(0).deviceId());
+  assertThrows(ServiceException.class,()->pages.save(11,saved.id(),process(0,d.id(),List.of("missing"),"missing")));
+  assertEquals(saved,pages.get(11,saved.id()));
+ }
+ @Test void processConcurrentUpdatesDoNotOverwriteEachOther() throws Exception {
+  ProcessScene saved=pages.save(11,null,process(0,null,List.of(),""));
+  var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+  try {
+   java.util.concurrent.Callable<Boolean> update=()->{
+    try {pages.save(11,saved.id(),process(0,null,List.of(),""));return true;}
+    catch(ServiceException conflict) {assertEquals(1_070_000_409,conflict.getCode());return false;}
+   };
+   long updated=0;for(var result:pool.invokeAll(List.of(update,update))) if(result.get()) updated++;
+   assertEquals(1,updated);assertEquals(1,pages.get(11,saved.id()).version());
+  } finally {pool.shutdownNow();}
+ }
+ @Test void processRequestIdentityCannotOverridePathOrTenant() {
+  ProcessScene saved=pages.save(11,null,process(0,null,List.of(),""));
+  ProcessScene wrong=new ProcessScene(saved.id()+1,saved.name(),saved.description(),0,1,saved.template(),saved.bindings(),5,120);
+  assertThrows(ServiceException.class,()->pages.save(11,saved.id(),wrong));
+  assertThrows(ServiceException.class,()->pages.save(11,null,wrong));
+  assertThrows(ServiceException.class,()->pages.save(11,null,process(1,null,List.of(),"")));
+  assertEquals(saved,pages.get(11,saved.id()));
+ }
+ @Test void mappingRemovedAfterProcessSaveFailsClosedBeforeUpstreamRead() {
+  Device d=device();repo.replaceMappings(11,d.id(),List.of(new Mapping("temperature","温度","P1.PV","C")));
+  ProcessScene saved=pages.save(11,null,process(0,d.id(),List.of("temperature"),"temperature"));
+  repo.replaceMappings(11,d.id(),List.of());
+  var client=mock(cn.iocoder.yudao.framework.realdb.core.client.RealDbClient.class);
+  var beans=new org.springframework.beans.factory.support.DefaultListableBeanFactory();beans.registerSingleton("realDb",client);
+  IotQueryService realQuery=new IotQueryService(repo,beans.getBeanProvider(cn.iocoder.yudao.framework.realdb.core.client.RealDbClient.class),"UTC");
+  assertThrows(ServiceException.class,()->realQuery.realtime(11,request(d.id())));
+  assertThrows(ServiceException.class,()->pages.save(11,saved.id(),process(0,d.id(),List.of("temperature"),"temperature")));
+  assertEquals(saved,pages.get(11,saved.id()));verifyNoInteractions(client);
+ }
+ @Test void processPageCapNeverHidesSuccessfullySavedPagesAcrossInstances() throws Exception {
+  for(int i=0;i<99;i++) pages.save(11,null,process(0,null,List.of(),""));
+  var other=new IotProcessRepository(db,new ObjectMapper(),repo);
+  var tx=new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(source));
+  var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+  try {
+   List<java.util.concurrent.Callable<Boolean>> tasks=new ArrayList<>();
+   for(var service:List.of(pages,other)) tasks.add(()->{
+    try {tx.execute(status->service.save(11,null,process(0,null,List.of(),"")));return true;}
+    catch(ServiceException limit) {assertTrue(limit.getMessage().contains("100"));return false;}
+   });
+   long accepted=0;for(var result:pool.invokeAll(tasks)) if(result.get()) accepted++;
+   assertEquals(1,accepted);assertEquals(100,pages.list(11).size());
+   assertThrows(ServiceException.class,()->pages.save(11,null,process(0,null,List.of(),"")));
+   ProcessScene first=pages.list(11).get(0);pages.delete(11,first.id(),first.version());
+   assertNotNull(pages.save(11,null,process(0,null,List.of(),"")).id());assertEquals(100,pages.list(11).size());
+   assertNotNull(pages.save(12,null,process(0,null,List.of(),"")).id());
+  } finally {pool.shutdownNow();}
  }
 }

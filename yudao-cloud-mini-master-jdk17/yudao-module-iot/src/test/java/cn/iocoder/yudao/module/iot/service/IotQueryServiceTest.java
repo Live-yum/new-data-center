@@ -47,6 +47,7 @@ class IotQueryServiceTest {
         QueryResult result = service.realtime(9, query("RAW"));
         assertThat(result.source()).isEqualTo("REALDB");
         assertThat(result.series().get(0).points().get(0).quality()).isEqualTo("UNKNOWN");
+        assertThat(result.series().get(0).points().get(0).timeSource()).isEqualTo("RECEIVED");
         assertThat(result.series().get(0).points().get(0).value()).isEqualTo(new BigDecimal("12.75"));
         verify(repository).mappings(9L, 1L);
         verify(client).getNamedData(eq(List.of("Plant.A.PV")), any());
@@ -59,6 +60,7 @@ class IotQueryServiceTest {
         Point point = service.realtime(9, query("RAW")).series().get(0).points().get(0);
         assertThat(point.value()).isNull();
         assertThat(point.quality()).isEqualTo("MISSING");
+        assertThat(point.timeSource()).isEqualTo("RECEIVED");
     }
 
     @Test
@@ -73,6 +75,7 @@ class IotQueryServiceTest {
         assertThat(point.value()).isEqualTo(new BigDecimal("15"));
         assertThat(point.quality()).isEqualTo("UNCERTAIN");
         assertThat(point.time()).isEqualTo("2026-10-26T02:00:02Z");
+        assertThat(point.timeSource()).isEqualTo("DEVICE");
         ArgumentCaptor<RealDbHistoryQueryDTO> captor = ArgumentCaptor.forClass(RealDbHistoryQueryDTO.class);
         verify(client).getHistoryRange(captor.capture());
         assertThat(captor.getValue().getStartTime()).isEqualTo(start.toLocalDateTime());
@@ -83,6 +86,18 @@ class IotQueryServiceTest {
     void absentHistoryIsEmptyRatherThanFabricatedSamples() throws Exception {
         when(client.getHistoryRange(any())).thenReturn(mapper.readTree("{\"items\":[]}"));
         assertThat(service.history(9, query("RAW")).series().get(0).points()).isEmpty();
+    }
+
+    @Test
+    void suppliedRealtimeTimestampIsDistinguishedFromReceiptTime() throws Exception {
+        when(client.getNamedData(anyList(),any())).thenReturn(mapper.readTree("{\"items\":[{\"name\":\"Plant.A.PV\",\"val\":12.75,\"time\":\"2026-10-26T10:00:00\",\"quality\":\"GOOD\"}]}"));
+        Point point=service.realtime(9,query("RAW")).series().get(0).points().get(0);
+        assertThat(point.timeSource()).isEqualTo("DEVICE");
+        assertThat(point.time()).isEqualTo("2026-10-26T02:00:00Z");
+        when(client.getNamedData(anyList(),any())).thenReturn(mapper.readTree("{\"items\":[{\"name\":\"Plant.A.PV\",\"val\":12.75,\"quality\":\"GOOD\"}]}"));
+        Point received=service.realtime(9,query("RAW")).series().get(0).points().get(0);
+        assertThat(received.timeSource()).isEqualTo("RECEIVED");
+        assertThat(received.quality()).isEqualTo("GOOD"); // value quality does not imply known sample age.
     }
 
     @Test

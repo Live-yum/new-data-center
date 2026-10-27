@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>生产路径自动化契约测试 — 非现场验收</title></head><body>
+<aside style="padding:12px;background:#fff1bd;font:14px sans-serif" data-testid="contract-fixture-banner">自动化契约测试夹具 · TEST FIXTURE · 真实生产代码/API，非紫金桥现场数据或现场验收</aside>
+<nav style="padding:8px;display:flex;gap:8px;flex-wrap:wrap">
+<button id="tenant-one">测试租户 7001</button><button id="tenant-two">测试租户 7002</button>
+<button id="unmount">卸载测试子应用</button><button id="remount">挂载测试子应用</button>
+<button id="leave-host">离开测试宿主（受保护）</button>
+<button id="host-storage">宿主导航到储罐页</button>
+<span data-testid="harness-status">未挂载</span><span>待处理 <b data-testid="harness-pending">0</b></span>
+</nav><div id="micro-container" data-testid="production-micro-container"></div>
+<script type="module" src="/main.ts"></script></body></html>

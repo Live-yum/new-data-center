@@ -12,6 +12,7 @@ Java 17 / Maven 3.9+。先在**已备份、受控的测试库**人工审阅并�
 
 ```
 yudao-cloud-mini-master-jdk17/sql/postgresql/upgrade/20261026_iot.sql
+yudao-cloud-mini-master-jdk17/sql/postgresql/upgrade/20261027_iot_process.sql
 ```
 
 脚本只有 `CREATE ... IF NOT EXISTS`，不删除旧表、不修改原业务表、不分配账号角色权限；启动不执行迁移。`IF NOT EXISTS` 不是结构升级检测，已有同名但不同结构的表必须先人工比对。支持 PostgreSQL 与 PostgreSQL 兼容模式金仓；金仓真实实例未在本变更中验证。
@@ -57,6 +58,12 @@ java -jar yudao-server/target/yudao-server.jar
 | 方法/路径 | 请求 | 成功data |
 |---|---|---|
 | GET `/devices` | 无 | `Device[]`，最多500 |
+| GET `/sources` | 无 | 单一部署的安全数据源状态 `Source[]` |
+| GET `/process-pages` | 无 | 当前租户完整 `ProcessScene[]`，最多100 |
+| GET `/process-pages/{id}` | 无 | 完整 ProcessScene |
+| POST `/process-pages` | ProcessScene，version=0、id省略或0 | 完整 ProcessScene |
+| PUT `/process-pages/{id}` | ProcessScene，携带当前version | 完整 ProcessScene，version+1 |
+| DELETE `/process-pages/{id}?version=N` | 当前version | boolean |
 | POST `/devices` | `{name,code}` | 完整Device |
 | GET `/devices/{id}/mappings` | 无 | `Mapping[]` |
 | PUT `/devices/{id}/mappings` | `Mapping[]`，整体替换 | 完整Mapping[] |
@@ -94,7 +101,7 @@ type Query = {
 };
 type QueryResult = { source:'REALDB'; series: {
   deviceId:number; metricKey:string; unit:string;
-  points:{ time:string; value:number|string|null; quality:'GOOD'|'BAD'|'UNCERTAIN'|'UNKNOWN'|'MISSING' }[];
+  points:{ time:string; value:number|string|null; quality:'GOOD'|'BAD'|'UNCERTAIN'|'UNKNOWN'|'MISSING'; timeSource:'DEVICE'|'RECEIVED' }[];
 }[] };
 type ExportJob = {id:string; status:'QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CANCELLED'|'EXPIRED';
   createdAt:string; expiresAt:string; error:string|null};
@@ -108,7 +115,7 @@ type ExportJob = {id:string; status:'QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CAN
 * `RAW` 是 `getHistoryRange` **按intervalMs的供应商采样结果**，不承诺未采样全量。`AVG/MIN/MAX/LAST` 是**整个查询窗口**的单值聚合，不是每分钟/每桶聚合；曲线用RAW。AVG/MIN/MAX仅聚合数字且排除BAD/null，有质量问题则结果UNCERTAIN；LAST保留最后返回点。下载使用完全相同查询与聚合逻辑。
 * 仅适配文档可验证的实时 `{items:[{name,val,time?,quality?}]}` 和历史 `{items:[{name,vals:[{time,val,quality?}]}]}`。未知形状失败关闭，不随意猜测字段；现场响应有差异时须提供脱敏样本并加契约测试后扩展。不是已经完成真实紫金桥服务器联调的声明。
 * quality只识别明确字符串 GOOD/BAD/UNCERTAIN；未提供/未知/数字质量码=UNKNOWN，不猜测GOOD。值null= MISSING。缺少整个实时点返回null/MISSING；历史空序列返回`points:[]`，不补0、不插值、不制造采样点。
-* 实时供应商未带time时使用接收时刻，不应标注为设备采集时间。历史须有合法time。API使用带offset时间；适配层按配置zone转换供应商本地时间，返回UTC。跨夏令时切换或无法确定本地时间的请求/响应拒绝，不静默改时区。
+* 实时供应商未带time时使用接收时刻并返回 `timeSource:RECEIVED`，只能标注接收时间/采集时间未知，不能据此判断数据新鲜。供应商提供合法time时返回 `timeSource:DEVICE`。历史须有合法time。API使用带offset时间；适配层按配置zone转换供应商本地时间，返回UTC。跨夏令时切换或无法确定本地时间的请求/响应拒绝，不静默改时区。
 * stat/gauge/table/image使用实时RAW；timeline仅RAW；只有line/bar可选择窗口聚合。后端保存配置时拒绝其他组件的非RAW组合，避免前端静默忽略。图表unit是展示标签；不做单位换算、设备状态推断、告警规则计算或图片热点控制操作。服务不实现逐设备ACL、实时推送与长期批量原始归档，这些不被包装成已有能力。
 
 ## 导出生命周期
@@ -130,3 +137,36 @@ mvn -pl yudao-module-iot -am verify
 测试类：`IotRepositoryTest` (H2 PostgreSQL模式，租户/版本/映射/模板/导出/取消竞态)、`IotPostgresqlTest` (继承同一契约、真实PostgreSQL)、`IotDashboardValidatorTest`、`IotQueryServiceTest` (mock上游，不伪称现场RealDB)、`IotControllerSecurityTest` (真实token/租户过滤器+方法鉴权，模拟远端鉴权服务)。CI要求PG类非skip并独立启动exec检查无凭据与伪造login-user都被拒绝。
 
 本地/CI实际通过项以构建日志为准。缺少数据库、Redis、system/infra或真实RealDB时不可把静态检查/单元测试写成完整上线验收。此实现不执行真实库迁移、不生产部署、不改签名或访问凭据。
+
+## 正式工艺页面与紫金桥数据源状态
+
+正式工艺入口使用上述 `/iot/process-pages` 后端，不读取演示 bridge、演示设备或固定模拟测点。数据库迁移 `20261027_iot_process.sql` 将工艺配置单独保存到 `iot_process_page`；不是浏览器 localStorage，也不混入通用看板表。页面从空配置开始，允许明确的未绑定位置，不自动创建现场设备或测点。五种模板为四设备位置的可复用展示结构：油气水分离、天然气处理、储罐外输、公用工程、海上平台；它们**不是经过现场审核的 P&ID/工艺设计**，不提供自由管线设计、设备控制或工程安全联锁功能。
+
+```ts
+type Source = {
+  id: 'default'; name: string; type: 'REALDB'; enabled: boolean; configured: boolean;
+  status: 'DISABLED' | 'NOT_CONFIGURED' | 'CONFIGURED';
+  timeZone: string; description: string;
+};
+type ProcessScene = {
+  id?: number; name: string; description?: string; version: number; schemaVersion: 1;
+  template: 'separation' | 'gas' | 'storage' | 'utilities' | 'offshore';
+  bindings: {
+    slotId: 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4';
+    deviceId: number | null; metricKeys: string[]; primaryMetricKey: string;
+  }[];
+  refreshSeconds: number; staleAfterSeconds: number;
+};
+```
+
+每租户最多100个工艺页面；创建时数据库锁行跨实例串行校验上限，超额明确拒绝，不会保存后在列表中悄悄截断。删除旧页面后可再次创建。
+
+保存验证：名称非空最多100字符、描述最多500字符；恰好四个不同位置。未绑定位置须 `deviceId:null, metricKeys:[], primaryMetricKey:''`；绑定后选择1–20个不重复统一指标，主指标必须在所选指标内，每个设备和指标必须真实存在于当前租户配置，整页最多50个设备指标。统一指标键仍限64字符（字母数字、下划线、点、短横线），绝不把浏览器原始测点传入实时库。刷新周期整数5–300秒，过期阈值整数且不小于刷新周期、不大于3600秒。创建 version=0，更新与删除必须携带当前 version；冲突返回 `1070000409`，不会替用户覆盖别人的配置。路径ID不能被请求体替换，租户只取经过认证的上下文。
+
+工艺读取复用 `iot:dashboard:query`，保存/删除复用 `iot:dashboard:configure`，源状态复用 `iot:device:query`，实时/历史与导出仍分别校验既有 `iot:data:query` / `iot:data:export`。本变更不新增权限、角色授权或匿名接口。只读用户可以查看已保存配置，但是否能读值仍由数据查询权限单独决定。指标映射此后被移除时，读值按现有映射解析规则明确失败，不换读其他指标、不填0；再次保存引用该指标的页面也会拒绝，需管理员修正绑定。
+
+`GET /iot/sources` **只检查配置完整性，不发起任何上游调用**。当前有且只有一个部署级 `default` 紫金桥连接；所有已配置设备走现有 singleton `RealDbClient`。不声称多数据源管理，不让浏览器提交URL、密码、token，不向浏览器返回这些字段。`CONFIGURED` 仅意味着开启且基本连接/认证配置和客户端存在，不意味着网络可达、登录成功、测点授权正确或现场数据已验收。`DISABLED` 或 `NOT_CONFIGURED` 不会回退模拟值。各租户应通过部署及上游账户只读权限隔离使用范围，本版不是多租户上游凭据管理器，也没有逐设备ACL。
+
+聚合与独立服务均接受外部变量 `REALDB_ENABLED`（默认false）、`REALDB_URL`、`REALDB_USERNAME`、`REALDB_PASSWORD`、可选 `REALDB_TOKEN`、`REALDB_ZONE`（默认UTC）。也可沿用 `yudao.realdb.*` 外部属性和已有token配置。变量由部署运维安全提供，版本库与页面不保存实际值。启用时地址无效会在客户端初始化时失败；不会悄悄使用默认公网/内网地址。现场服务器时区须与 `REALDB_ZONE` 一致。
+
+新增测试覆盖五模板/空绑定/边界与坏输入、关系库持久化/租户/映射校验、同版本并发只成功一次、HTTP身份与查询/配置权限，以及源状态不调用上游和不泄漏秘密。`IotPostgresqlTest` 继承包括工艺页面在内的相同存储契约；缺少专用测试库时该类仍跳过，不能称已完成 PostgreSQL 验证。所有测试替身只用于测试，不能替代指定紫金桥版本、真实只读账号、点名清单及脱敏响应样本的现场验收。

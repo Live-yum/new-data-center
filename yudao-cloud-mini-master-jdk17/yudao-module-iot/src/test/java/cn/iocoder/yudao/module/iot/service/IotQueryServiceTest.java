@@ -147,6 +147,39 @@ class IotQueryServiceTest {
     }
 
     @Test
+    void rejectsSubMillisecondHistoryBoundariesBeforeBindingsOrUpstream() {
+        for (Query invalidPrecision : List.of(
+                new Query(List.of(1L), List.of("temperature"), start.plusNanos(1), start.plusMinutes(1), 1000L, "RAW"),
+                new Query(List.of(1L), List.of("temperature"), start, start.plusMinutes(1).plusNanos(778000), 1000L, "RAW"),
+                new Query(List.of(1L), List.of("temperature"), start.plusNanos(401778000), start.plusMinutes(1).plusNanos(401778000), 1000L, "RAW"))) {
+            assertThatThrownBy(() -> service.history(9, invalidPrecision)).isInstanceOfSatisfying(ServiceException.class,
+                    error -> assertThat(error.getCode()).isEqualTo(1_070_000_001)).hasMessageContaining("毫秒精度");
+        }
+        verifyNoInteractions(repository, client);
+    }
+
+    @Test
+    void preservesSupportedMillisecondBoundariesExactly() throws Exception {
+        when(client.getHistoryRange(any())).thenReturn(mapper.readTree("{\"items\":[]}"));
+        OffsetDateTime from = start.plusNanos(123000000);
+        OffsetDateTime to = start.plusMinutes(1).plusNanos(456000000);
+        service.history(9, new Query(List.of(1L), List.of("temperature"), from, to, 1000L, "RAW"));
+        ArgumentCaptor<RealDbHistoryQueryDTO> captor = ArgumentCaptor.forClass(RealDbHistoryQueryDTO.class);
+        verify(client).getHistoryRange(captor.capture());
+        assertThat(captor.getValue().getStartTime()).isEqualTo(from.toLocalDateTime());
+        assertThat(captor.getValue().getEndTime()).isEqualTo(to.toLocalDateTime());
+    }
+
+    @Test
+    void realtimeIgnoresUnusedHistoryBoundaryPrecision() throws Exception {
+        when(client.getNamedData(anyList(), any())).thenReturn(mapper.readTree("{\"items\":[]}"));
+        Query request = new Query(List.of(1L), List.of("temperature"), start.plusNanos(1), start.plusMinutes(1).plusNanos(1), 1000L, "RAW");
+        assertThat(service.realtime(9, request).source()).isEqualTo("REALDB");
+        verify(client).getNamedData(eq(List.of("Plant.A.PV")), any());
+        verify(client, never()).getHistoryRange(any());
+    }
+
+    @Test
     void handlesMissingUnknownAndNumericAggregationsHonestly() {
         List<Point> points = List.of(new Point("2026-01-01T00:00:00Z", new BigDecimal("2"), "UNKNOWN"),
                 new Point("2026-01-01T00:00:01Z", new BigDecimal("4"), "GOOD"));

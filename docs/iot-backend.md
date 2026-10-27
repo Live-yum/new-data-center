@@ -115,7 +115,7 @@ type ExportJob = {id:string; status:'QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'CAN
 * `RAW` 是 `getHistoryRange` **按intervalMs的供应商采样结果**，不承诺未采样全量。`AVG/MIN/MAX/LAST` 是**整个查询窗口**的单值聚合，不是每分钟/每桶聚合；曲线用RAW。AVG/MIN/MAX仅聚合数字且排除BAD/null，有质量问题则结果UNCERTAIN；LAST保留最后返回点。下载使用完全相同查询与聚合逻辑。
 * 仅适配文档可验证的实时 `{items:[{name,val,time?,quality?}]}` 和历史 `{items:[{name,vals:[{time,val,quality?}]}]}`。未知形状失败关闭，不随意猜测字段；现场响应有差异时须提供脱敏样本并加契约测试后扩展。不是已经完成真实紫金桥服务器联调的声明。
 * quality只识别明确字符串 GOOD/BAD/UNCERTAIN；未提供/未知/数字质量码=UNKNOWN，不猜测GOOD。值null= MISSING。缺少整个实时点返回null/MISSING；历史空序列返回`points:[]`，不补0、不插值、不制造采样点。
-* 实时供应商未带time时使用接收时刻并返回 `timeSource:RECEIVED`，只能标注接收时间/采集时间未知，不能据此判断数据新鲜。供应商提供合法time时返回 `timeSource:DEVICE`。历史须有合法time。API使用带offset时间；适配层按配置zone转换供应商本地时间，返回UTC。跨夏令时切换或无法确定本地时间的请求/响应拒绝，不静默改时区。
+* 实时供应商未带time时使用接收时刻并返回 `timeSource:RECEIVED`，只能标注接收时间/采集时间未知，不能据此判断数据新鲜。供应商提供合法time时返回 `timeSource:DEVICE`。历史须有合法time。历史查询/导出的起止时间最多支持毫秒精度，超出精度时在查询上游或入队前返回业务参数错误 `1070000001`，不自动截断或四舍五入。API使用带offset时间；适配层按配置zone转换供应商本地时间，返回UTC。跨夏令时切换或无法确定本地时间的请求/响应拒绝，不静默改时区。
 * stat/gauge/table/image使用实时RAW；timeline仅RAW；只有line/bar可选择窗口聚合。后端保存配置时拒绝其他组件的非RAW组合，避免前端静默忽略。图表unit是展示标签；不做单位换算、设备状态推断、告警规则计算或图片热点控制操作。服务不实现逐设备ACL、实时推送与长期批量原始归档，这些不被包装成已有能力。
 
 ## 导出生命周期

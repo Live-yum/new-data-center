@@ -9,6 +9,7 @@ import sys
 import threading
 import unittest
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 PATH = Path(__file__).with_name('production-fixture.py')
@@ -74,6 +75,18 @@ class FixtureTests(unittest.TestCase):
         value = self.call('/api/realdata?names=fixture.device.1.pressure&token='+FIXTURE.VENDOR_TOKEN)[1]
         self.assertIsNone(value['items'][0]['val'])
         self.call('/__fixture/control', 'POST', {'mode': 'normal'})
+
+    def test_documented_millisecond_history_shape_and_missing_sample(self):
+        query = urlencode({'names': 'fixture.device.1.pressure', 'token': FIXTURE.VENDOR_TOKEN,
+                           'startTime': '2026-10-27T03:17:17.401', 'endTime': '2026-10-27T03:22:17.401',
+                           'interval': 60000})
+        status, response = self.call('/api/hisdata?'+query)
+        self.assertEqual(status, 200)
+        points = response['items'][0]['vals']
+        self.assertEqual(len(points), 6)
+        self.assertEqual(points[0]['time'], '2026-10-27T03:17:17.401')
+        self.assertEqual(points[-1]['time'], '2026-10-27T03:22:17.401')
+        self.assertIsNone(points[2]['val'])
 
 
 if __name__ == '__main__':

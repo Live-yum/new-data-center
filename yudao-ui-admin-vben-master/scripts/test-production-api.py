@@ -102,12 +102,27 @@ try:
     assert real['series'][0]['points'][0]['quality'] == 'GOOD'
     assert real['series'][0]['points'][0]['timeSource'] == 'DEVICE'
     end = datetime.now(timezone.utc)
-    history_query = {**query, 'startTime': (end-timedelta(minutes=5)).isoformat(), 'endTime': end.isoformat(), 'intervalMs': 60000}
+    # The vendor protocol accepts milliseconds, matching browser Date.toISOString().
+    # Python's default ISO serialization emits unsupported microseconds.
+    history_query = {**query, 'startTime': (end-timedelta(minutes=5)).isoformat(timespec='milliseconds'),
+                     'endTime': end.isoformat(timespec='milliseconds'), 'intervalMs': 60000}
     history = api('/query/history', 'POST', history_query)
     assert history['source'] == 'REALDB' and len(history['series'][0]['points']) == 6
     assert history['series'][0]['points'][2]['value'] is None
     assert history['series'][0]['points'][2]['quality'] == 'MISSING'
     check('real controller, PostgreSQL mapping and authenticated RealDbClient HTTP round trips')
+
+    precision_before = http('http://127.0.0.1:48084/__fixture/state')[1]
+    for boundary in ('startTime', 'endTime'):
+        invalid_boundary = (datetime.fromisoformat(history_query[boundary])+timedelta(microseconds=1)).isoformat()
+        invalid_query = {**history_query, boundary: invalid_boundary}
+        api('/query/history', 'POST', invalid_query, expected=1070000001)
+        api('/exports', 'POST', invalid_query, expected=1070000001)
+    precision_after = http('http://127.0.0.1:48084/__fixture/state')[1]
+    vendor_paths = lambda state: [r for r in state['requests'] if r['path'].startswith('/api/')]
+    assert vendor_paths(precision_before) == vendor_paths(precision_after), 'Sub-millisecond input must fail before vendor access'
+    assert api('/exports') == [], 'Invalid precision must not enqueue export jobs'
+    check('sub-millisecond history/export boundaries rejected clearly before upstream or queueing')
 
     before = http('http://127.0.0.1:48084/__fixture/state')[1]
     reads = lambda state: sum(r['path'].startswith('/api/') for r in state['requests'])

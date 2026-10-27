@@ -106,6 +106,11 @@ public class IotQueryService {
         if (q.startTime() == null || q.endTime() == null || q.intervalMs() == null || q.intervalMs() < 1000) {
             throw invalid("历史查询必须提供带时区的起止时间和至少1000ms采样间隔");
         }
+        // Match the vendor client's millisecond contract before any mapping lookup, queue write or HTTP request.
+        // Never truncate an unsupported boundary and silently change the requested history window.
+        if (q.startTime().getNano() % 1_000_000 != 0 || q.endTime().getNano() % 1_000_000 != 0) {
+            throw invalid("历史查询起止时间最多支持毫秒精度，请显式提供毫秒或更低精度的时间");
+        }
         Duration duration = Duration.between(q.startTime().toInstant(), q.endTime().toInstant());
         if (duration.isNegative() || duration.isZero() || duration.compareTo(Duration.ofDays(7)) > 0) {
             throw invalid("查询窗口须大于0且不超过7天");

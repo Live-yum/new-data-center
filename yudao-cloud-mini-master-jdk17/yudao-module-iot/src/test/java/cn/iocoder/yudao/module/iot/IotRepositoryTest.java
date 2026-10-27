@@ -108,6 +108,16 @@ public class IotRepositoryTest {
   for(int i=0;i<3;i++) exports.create(11,7,request(d.id()));
   assertThrows(ServiceException.class,()->exports.create(11,7,request(d.id())));
  }
+ @Test void exportRejectsSubMillisecondHistoryBeforeEnqueueing() {
+  Device d=device();Query valid=request(d.id());
+  for(Query invalid:List.of(
+    new Query(valid.deviceIds(),valid.metricKeys(),valid.startTime().plusNanos(1),valid.endTime(),valid.intervalMs(),valid.aggregation()),
+    new Query(valid.deviceIds(),valid.metricKeys(),valid.startTime(),valid.endTime().plusNanos(778000),valid.intervalMs(),valid.aggregation()))) {
+   ServiceException error=assertThrows(ServiceException.class,()->exports.create(11,7,invalid));
+   assertEquals(1_070_000_001,error.getCode());assertTrue(error.getMessage().contains("毫秒精度"));
+  }
+  assertTrue(exports.list(11,7).isEmpty());verifyNoInteractions(query);
+ }
  protected ProcessScene process(long version, Long deviceId, List<String> metrics, String primary) {
   return new ProcessScene(null,"现场工艺",null,version,1,"separation",List.of(
     new ProcessBinding("slot-1",deviceId,metrics,primary),

@@ -1,5 +1,7 @@
 /** Versioned transport contract. No tokens, arbitrary URLs or device-control API. */
 export interface IotDevice {
+  /** Immutable server-side source binding. Older deployments omit only the legacy default. */
+  sourceId?: string;
   id: number;
   name: string;
   code: string;
@@ -53,6 +55,8 @@ export interface IotQuery {
   aggregation: IotAggregation;
 }
 export interface IotSeries {
+  /** Must match the requested device source; omission is legacy default only. */
+  sourceId?: string;
   deviceId: number;
   metricKey: string;
   unit: string;
@@ -64,11 +68,20 @@ export interface IotSeries {
     timeSource?: 'DEVICE' | 'RECEIVED';
   }[];
 }
+export interface IotSourceError {
+  sourceId: string;
+  code: string;
+  message: string;
+}
 export interface IotResult {
   source: string;
+  partial?: boolean;
+  errors?: IotSourceError[];
   series: IotSeries[];
 }
 export interface IotExport {
+  /** Sources captured in the durable export snapshot, not inferred from today's mappings. */
+  sourceIds?: string[];
   id: string;
   status: string;
   createdAt: string;
@@ -131,7 +144,7 @@ export interface IotBridge {
   ) => Promise<IotResult>;
   devices(signal: AbortSignal): Promise<IotDevice[]>;
   createDevice(
-    device: { name: string; code: string },
+    device: { name: string; code: string; sourceId?: string },
     signal: AbortSignal,
   ): Promise<IotDevice>;
   mappings(id: number, signal: AbortSignal): Promise<IotMapping[]>;

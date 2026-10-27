@@ -507,4 +507,247 @@ describe('IoT workbench session, cancellation and conflict integration', () => {
       expect.any(AbortSignal),
     );
   });
+
+  function platformProps(
+    bridge: IotBridge,
+    route = '/devices',
+    session = 'session-one',
+  ) {
+    const value = props(bridge, session, route);
+    value.context!.dataSource = 'platform';
+    return value;
+  }
+  const sourceList = ['a', 'b'].map((id) => ({
+    id,
+    name: `现场源${id}`,
+    type: 'REALDB' as const,
+    enabled: true,
+    configured: true,
+    status: 'CONFIGURED' as const,
+    timeZone: 'Asia/Shanghai',
+    description: '',
+  }));
+  const namedDevices = [
+    { id: 1, name: '同名设备', code: 'A', sourceId: 'a' },
+    { id: 2, name: '同名设备', code: 'B', sourceId: 'b' },
+  ];
+  function fill(label: string, value: string) {
+    const input = container.querySelector<HTMLInputElement>(
+      `[aria-label="${label}"]`,
+    )!;
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  it('requires explicit configured source selection when creating production devices, with immutable binding labels', async () => {
+    const bridge = api({
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => [
+        ...sourceList,
+        { ...sourceList[0]!, id: 'off', status: 'DISABLED' as const, enabled: false },
+      ]),
+    });
+    await mount({ container, ...platformProps(bridge) });
+    await settle();
+    expect(button('iot-device-create').disabled).toBe(true);
+    expect(
+      container.querySelector('[data-testid="iot-current-source"]')!
+        .textContent,
+    ).toContain('现场源a [a]');
+    expect(container.textContent).toContain('绑定创建后不可修改');
+    const select = container.querySelector<HTMLSelectElement>(
+      '[data-testid="iot-new-device-source"]',
+    )!;
+    expect(select.value).toBe('');
+    expect(
+      select.querySelector<HTMLOptionElement>('[value="off"]')!.disabled,
+    ).toBe(true);
+    fill('设备名称', '新建真实设备');
+    fill('设备编码', 'NEW');
+    select.value = 'b';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    button('iot-device-create').click();
+    button('iot-device-create').click();
+    await settle();
+    expect(bridge.createDevice).toHaveBeenCalledTimes(1);
+    expect(bridge.createDevice).toHaveBeenCalledWith(
+      { name: '新建真实设备', code: 'NEW', sourceId: 'b' },
+      expect.any(AbortSignal),
+    );
+    expect(select.value).toBe('');
+  });
+  it('clears source choices and draft identifiers on tenant change and ignores late old-tenant catalog', async () => {
+    const pending = deferred<typeof sourceList>();
+    let oldSignal!: AbortSignal;
+    const old = api({
+      sources: vi.fn((signal) => {
+        oldSignal = signal;
+        return pending.promise;
+      }),
+    });
+    await mount({ container, ...platformProps(old) });
+    await settle();
+    const fresh = api({
+      devices: vi.fn(async () => [namedDevices[1]!]),
+      sources: vi.fn(async () => [sourceList[1]!]),
+    });
+    await update(platformProps(fresh, '/devices', 'session-two'));
+    await settle();
+    pending.resolve([sourceList[0]!]);
+    await settle();
+    expect(oldSignal.aborted).toBe(true);
+    const select = container.querySelector<HTMLSelectElement>(
+      '[data-testid="iot-new-device-source"]',
+    )!;
+    expect(select.value).toBe('');
+    expect(select.textContent).toContain('[b]');
+    expect(select.textContent).not.toContain('[a]');
+  });
+  it('retains healthy source values and explicit failed-source errors in a multiple-source dashboard and history', async () => {
+    const board = dashboard();
+    board.widgets[0]!.binding = {
+      mode: 'multiple',
+      deviceIds: [1, 2],
+      metricKey: mapping.metricKey,
+    };
+    const bridge = api({
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => sourceList),
+      dashboards: vi.fn(async () => [board]),
+      query: vi.fn(async () => ({
+        source: 'REALDB',
+        partial: true,
+        errors: [
+          { sourceId: 'a', code: 'SOURCE_UNAVAILABLE', message: '上游不可用' },
+        ],
+        series: [{ ...result(87).series[0]!, deviceId: 2, sourceId: 'b' }],
+      })),
+    });
+    await mount({ container, ...platformProps(bridge, '/dashboards') });
+    await settle();
+    const widget = container.querySelector(
+      '[data-testid="iot-widget-temperature"]',
+    )!;
+    expect(widget.textContent).toContain('87');
+    expect(widget.textContent).toContain('现场源b [b]');
+    expect(widget.textContent).toContain('现场源a [a]：上游不可用');
+    await update({ route: '/history' });
+    await settle();
+    const historySelect = container.querySelector<HTMLSelectElement>(
+      '[aria-label="历史设备集合"]',
+    )!;
+    for (const option of historySelect.options) option.selected = true;
+    historySelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    button('iot-history-run').click();
+    await settle();
+    expect(
+      container.querySelector('[data-testid="iot-history-errors"]')!
+        .textContent,
+    ).toContain('上游不可用');
+    expect(
+      container.querySelector('[data-testid="iot-history-results"]')!
+        .textContent,
+    ).toContain('87');
+  });
+  it('invalidates a pending history response when selected source devices change', async () => {
+    const pending = deferred<IotResult>();
+    let signal!: AbortSignal;
+    const bridge = api({
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => sourceList),
+      query: vi.fn((_mode, _query, request) => {
+        signal = request;
+        return pending.promise;
+      }),
+    });
+    await mount({ container, ...platformProps(bridge, '/history') });
+    await settle();
+    button('iot-history-run').click();
+    await settle();
+    const select = container.querySelector<HTMLSelectElement>(
+      '[aria-label="历史设备集合"]',
+    )!;
+    for (const option of select.options) option.selected = option.value === '2';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    expect(signal.aborted).toBe(true);
+    pending.resolve({
+      source: 'REALDB',
+      series: [{ ...result(999).series[0]!, sourceId: 'a' }],
+    });
+    await settle();
+    expect(
+      container.querySelector('[data-testid="iot-history-results"]')!
+        .textContent,
+    ).not.toContain('999');
+  });
+  it('does not render a valid but unsolicited source device in history results', async () => {
+    const bridge = api({
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => sourceList),
+      query: vi.fn(async () => ({
+        source: 'REALDB',
+        series: [{ ...result(999).series[0]!, deviceId: 2, sourceId: 'b' }],
+      })),
+    });
+    await mount({ container, ...platformProps(bridge, '/history') });
+    await settle();
+    button('iot-history-run').click();
+    await settle();
+    expect(
+      container.querySelector('[data-testid="iot-history-results"]')!
+        .textContent,
+    ).not.toContain('999');
+  });
+  it('clears old-source widget values immediately when a new fixed binding is applied while the replacement query waits', async () => {
+    const pending = deferred<IotResult>();
+    const bridge = api({
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => sourceList),
+      query: vi.fn(async (_mode, query) =>
+        query.deviceIds[0] === 2
+          ? pending.promise
+          : {
+              source: 'REALDB',
+              series: [{ ...result(31).series[0]!, sourceId: 'a' }],
+            },
+      ),
+    });
+    await mount({ container, ...platformProps(bridge, '/dashboards') });
+    await settle();
+    const widget = container.querySelector(
+      '[data-testid="iot-widget-temperature"]',
+    )!;
+    expect(widget.textContent).toContain('31');
+    button('iot-edit').click();
+    await settle();
+    Array.from(widget.querySelectorAll('button'))
+      .find((node) => node.textContent?.trim() === '配置')!
+      .click();
+    await settle();
+    const mode = container.querySelector<HTMLSelectElement>(
+      '[data-testid="iot-binding-mode"]',
+    )!;
+    mode.value = 'fixed';
+    mode.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    const selection = container.querySelector<HTMLSelectElement>(
+      '[data-testid="iot-binding-devices"]',
+    )!;
+    for (const option of selection.options)
+      option.selected = option.value === '2';
+    selection.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    button('iot-binding-save').click();
+    await settle();
+    expect(widget.textContent).not.toContain('31');
+    expect(widget.textContent).toContain('现场源b [b]');
+    pending.resolve({
+      source: 'REALDB',
+      series: [{ ...result(87).series[0]!, deviceId: 2, sourceId: 'b' }],
+    });
+    await settle();
+    expect(widget.textContent).toContain('87');
+  });
 });

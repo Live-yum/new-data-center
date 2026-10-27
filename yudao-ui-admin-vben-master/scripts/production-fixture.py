@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Explicit, loopback-only CI contract fixture; never a Zijinqiao/site emulator.
+"""Explicit, loopback-only CI peers; never Zijinqiao/site emulators.
 
-The real packaged IoT service retains its token/tenant/permission filters and real
-RealDbClient. Only its external system RPC and vendor HTTP peers are fixtures.
-No production build imports this file. All identities/tokens are disposable.
+Each source is a separate process/listener with independent token, failure state
+and request audit. Points deliberately collide, while values differ by 1000.
+Only source-a also provides the declared system RPC fixture. No production build
+imports this file. All identities and tokens are disposable TEST FIXTURE data.
 """
+import argparse
 import json
 import os
 import re
@@ -23,14 +25,28 @@ PERMISSIONS = {
     'iot:device:query', 'iot:device:configure', 'iot:dashboard:query',
     'iot:dashboard:configure', 'iot:data:query', 'iot:data:export',
 }
-VENDOR_TOKEN = 'ci-disposable-realdb-contract-token'
-LOCK = threading.Lock()
-STATE = {'mode': 'normal', 'delayMs': 0, 'requests': []}
+SOURCES = {
+    'source-a': {'port': 48084, 'token': 'ci-disposable-realdb-source-a-token', 'offset': 0},
+    'source-b': {'port': 48085, 'token': 'ci-disposable-realdb-source-b-token', 'offset': 1000},
+}
+
+
+class FixtureServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address, source):
+        assert source in SOURCES
+        self.source = source
+        self.spec = SOURCES[source]
+        self.lock = threading.Lock()
+        self.state = {'sourceId': source, 'mode': 'normal', 'delayMs': 0,
+                      'historyDelayMs': 0, 'requests': []}
+        super().__init__(address, Handler)
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
-        pass  # Never log full URLs: vendor and token-check URLs contain tokens.
+        pass  # Full URLs may contain disposable tokens; never log them.
 
     def respond(self, value, status=200):
         body = json.dumps(value, ensure_ascii=False).encode()
@@ -45,20 +61,24 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def common(self, data, code=0):
-        self.respond({'code': code, 'data': data, 'msg': 'CI contract fixture'})
+        self.respond({'code': code, 'data': data, 'msg': 'TEST FIXTURE contract peer'})
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path, query = parsed.path, parse_qs(parsed.query)
         value = lambda key: query.get(key, [''])[0]
-        with LOCK:
+        with self.server.lock:
             if path == '/__fixture/state':
-                self.respond(dict(STATE))
+                self.respond(dict(self.server.state))
                 return
-            event = {'method': 'GET', 'path': path}
-            STATE['requests'].append(event)
-            mode, delay = STATE['mode'], STATE['delayMs']
-        if path == '/rpc-api/system/oauth2/token/check':
+            event = {'sourceId': self.server.source, 'method': 'GET', 'path': path}
+            self.server.state['requests'].append(event)
+            mode = self.server.state['mode']
+            delay = (self.server.state['historyDelayMs'] if path == '/api/hisdata'
+                     and self.server.state['historyDelayMs'] else self.server.state['delayMs'])
+        if path.startswith('/rpc-api/') and self.server.source != 'source-a':
+            self.respond({'code': 404, 'msg': 'System RPC exists only on source-a test peer'}, 404)
+        elif path == '/rpc-api/system/oauth2/token/check':
             identity = TOKENS.get(value('accessToken'))
             if not identity:
                 self.common(None, 401)
@@ -75,15 +95,18 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/rpc-api/system/tenant/id-list':
             self.common([7001, 7002])
         elif path in ('/api/realdata', '/api/hisdata'):
-            if value('token') != VENDOR_TOKEN:
-                self.respond({'code': 403}, 403)
+            authenticated = value('token') == self.server.spec['token']
+            with self.server.lock:
+                event.update({'authenticated': authenticated})
+            if not authenticated or mode == 'unauthorized':
+                self.respond({'code': 403, 'msg': 'TEST FIXTURE rejected vendor authentication'}, 403)
                 return
             names = value('names').split(',')
             if not names or any(not re.fullmatch(r'fixture\.device\.[1-4]\.(pressure|temperature)', n) for n in names):
                 self.respond({'code': 400, 'msg': 'Only explicit fixture points exist'}, 400)
                 return
-            with LOCK:
-                event.update({'names': names, 'authenticated': True})
+            with self.server.lock:
+                event.update({'names': names, 'mode': mode})
             time.sleep(delay / 1000)
             if mode == 'failure':
                 self.respond({'code': 503, 'msg': 'Explicit contract-test outage'}, 503)
@@ -95,7 +118,7 @@ class Handler(BaseHTTPRequestHandler):
             items = []
             for name in names:
                 number = int(name.split('.')[2])
-                base = number * 10 + (0.25 if name.endswith('pressure') else 0.75)
+                base = self.server.spec['offset'] + number * 10 + (0.25 if name.endswith('pressure') else 0.75)
                 quality = ('GOOD', 'BAD', 'UNKNOWN', 'UNCERTAIN')[number - 1]
                 if path == '/api/realdata':
                     timestamp = now - timedelta(minutes=10) if mode == 'stale' else now
@@ -132,26 +155,31 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/__fixture/control':
             try:
                 data = json.loads(body)
-                assert set(data) <= {'mode', 'delayMs'}
-                assert data.get('mode', 'normal') in {'normal', 'failure', 'missing', 'stale', 'malformed', 'received'}
-                assert 0 <= data.get('delayMs', 0) <= 5000
+                assert isinstance(data, dict) and set(data) <= {'mode', 'delayMs', 'historyDelayMs'}
+                assert data.get('mode', 'normal') in {'normal', 'failure', 'unauthorized', 'missing', 'stale', 'malformed', 'received'}
+                assert all(isinstance(data.get(k, 0), int) and 0 <= data.get(k, 0) <= 5000
+                           for k in ('delayMs', 'historyDelayMs'))
             except (ValueError, TypeError, AssertionError):
                 self.respond({'code': 400}, 400)
                 return
-            with LOCK:
-                STATE.update(data)
-            self.respond({'ok': True})
-        elif path in ('/rpc-api/infra/api-access-log/create', '/rpc-api/infra/api-error-log/create'):
-            self.common(True)  # Test-only disposable log sink; bodies are not retained.
+            with self.server.lock:
+                self.server.state.update(data)
+            self.respond({'ok': True, 'sourceId': self.server.source})
+        elif (self.server.source == 'source-a'
+              and path in ('/rpc-api/infra/api-access-log/create', '/rpc-api/infra/api-error-log/create')):
+            self.common(True)  # Disposable log sink; bodies are not retained.
         else:
-            with LOCK:
-                STATE['requests'].append({'method': 'POST', 'path': path, 'rejected': True})
+            with self.server.lock:
+                self.server.state['requests'].append({'sourceId': self.server.source, 'method': 'POST', 'path': path, 'rejected': True})
             self.respond({'code': 405, 'msg': 'Vendor mutations are forbidden'}, 405)
 
 
 if __name__ == '__main__':
     if os.environ.get('CI_CONTRACT_FIXTURE') != 'explicit-test-only':
         raise SystemExit('Requires CI_CONTRACT_FIXTURE=explicit-test-only; not a production service')
-    server = ThreadingHTTPServer(('127.0.0.1', 48084), Handler)
-    print('TEST FIXTURE ONLY: external RPC + vendor contracts on loopback:48084', flush=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', choices=SOURCES, default='source-a')
+    args = parser.parse_args()
+    server = FixtureServer(('127.0.0.1', SOURCES[args.source]['port']), args.source)
+    print(f'TEST FIXTURE ONLY: independent {args.source} contract peer on loopback:{server.server_port}', flush=True)
     server.serve_forever()

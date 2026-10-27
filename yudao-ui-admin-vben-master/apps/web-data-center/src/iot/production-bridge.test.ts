@@ -61,6 +61,59 @@ describe('production IoT transport contract', () => {
     );
     expect(bridge.demoOilgasQuery).toBeUndefined();
   });
+  it('preserves explicit device source binding and partial-source outcomes', async () => {
+    const result = {
+      source: 'REALDB',
+      partial: true,
+      errors: [
+        {
+          sourceId: 'source-b',
+          code: 'SOURCE_UNAVAILABLE',
+          message: '数据源暂不可用',
+        },
+      ],
+      series: [
+        {
+          sourceId: 'source-a',
+          deviceId: 7,
+          metricKey: 'pressure',
+          unit: 'MPa',
+          points: [],
+        },
+      ],
+    };
+    const read = vi.fn(async () => result) as any;
+    const bridge = createIotBridge(read);
+    const signal = new AbortController().signal;
+    const device = { name: '同名泵', code: 'pump-a', sourceId: 'source-a' };
+    await bridge.createDevice(device, signal);
+    expect(read).toHaveBeenLastCalledWith(
+      '/iot/devices',
+      signal,
+      'POST',
+      device,
+    );
+    const query = {
+      deviceIds: [7, 8],
+      metricKeys: ['pressure'],
+      aggregation: 'RAW' as const,
+    };
+    expect(await bridge.query('realtime', query, signal)).toBe(result);
+    expect(read).toHaveBeenCalledTimes(2);
+    const job = {
+      id: 'job',
+      sourceIds: ['source-a', 'source-b'],
+      status: 'QUEUED',
+    };
+    read.mockResolvedValueOnce(job);
+    expect(await bridge.createExport(query, signal)).toBe(job);
+    expect(read).toHaveBeenLastCalledWith(
+      '/iot/exports',
+      signal,
+      'POST',
+      query,
+    );
+  });
   it('preserves real telemetry, private download and error semantics', async () => {
     const result = { source: 'REALDB', series: [] };
     const read = vi.fn(async () => result) as any;

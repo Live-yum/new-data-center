@@ -78,6 +78,8 @@
 }
 .dc-shell .pr-source-status > span {
   display: block;
+  overflow-wrap: anywhere;
+  padding: 4px 0;
 }
 .dc-shell .pr-source-status small {
   margin-left: 12px;

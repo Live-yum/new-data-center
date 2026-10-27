@@ -22,7 +22,7 @@ public class IotProcessController {
     }
     private long tenant() { return TenantContextHolder.getRequiredTenantId(); }
     @GetMapping("/sources") @PreAuthorize("@ss.hasPermission('iot:device:query')")
-    public CommonResult<List<Source>> sources() { tenant(); return success(sources.sources()); }
+    public CommonResult<List<Source>> sources() { return success(sources.sources(tenant())); }
     @GetMapping("/process-pages") @PreAuthorize("@ss.hasPermission('iot:dashboard:query')")
     public CommonResult<List<ProcessScene>> pages() { return success(pages.list(tenant())); }
     @GetMapping("/process-pages/{id}") @PreAuthorize("@ss.hasPermission('iot:dashboard:query')")

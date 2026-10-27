@@ -13,6 +13,14 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router';
 import { dataCenterKey } from '../context';
 import ProcessDiagram from './ProcessDiagram.vue';
 import SourceStatus from './SourceStatus.vue';
+import {
+  deviceSourceId,
+  deviceSourceLabel,
+  deviceSourceIssue,
+  sourceLabel,
+  productionSeries,
+  sourceResultErrors,
+} from './source-model';
 import WidgetView from './WidgetView.vue';
 import {
   cloneProcessScene,
@@ -48,6 +56,7 @@ const mappingErrors = ref<Record<number, string>>({});
 const mappingLoading = ref<Record<number, boolean>>({});
 const sources = ref<IotSource[]>([]);
 const sourceError = ref('');
+const sourcesLoaded = ref(false);
 const scene = ref<IotProcessScene>();
 const draft = ref<IotProcessScene>();
 const pageError = ref('');
@@ -110,11 +119,16 @@ const selectedMappings = computed(() =>
     binding.value?.metricKeys.includes(value.metricKey),
   ),
 );
-const sourceBlocked = computed(
-  () =>
-    sources.value.length > 0 &&
-    !sources.value.some((value) => value.status === 'CONFIGURED'),
+const selectedSourceIssue = computed(() =>
+  selectedDevice.value
+    ? deviceSourceIssue(
+        selectedDevice.value,
+        sources.value,
+        sourcesLoaded.value,
+      )
+    : '',
 );
+const sourceBlocked = computed(() => !!selectedSourceIssue.value);
 const draftIssues = computed(() =>
   draft.value
     ? validateProcessScene(draft.value, devices.value, mappings.value)
@@ -168,6 +182,7 @@ async function installScene(value?: IotProcessScene) {
   stopHistory();
   live.value = [];
   history.value = [];
+  lastHistoryQuery.value = undefined;
   lastRead.value = '';
   scene.value = undefined;
   if (!value) return;
@@ -197,6 +212,8 @@ async function initialize(preferredId?: number) {
   mappingLoading.value = {};
   sources.value = [];
   sourceError.value = '';
+  sourcesLoaded.value = false;
+  lastHistoryQuery.value = undefined;
   scene.value = undefined;
   draft.value = undefined;
   live.value = [];
@@ -223,7 +240,10 @@ async function initialize(preferredId?: number) {
         try {
           if (!current.sources) throw new Error('当前宿主未提供数据源状态能力');
           const result = await current.sources(signal);
-          if (!signal.aborted) sources.value = result;
+          if (!signal.aborted) {
+            sources.value = result;
+            sourcesLoaded.value = true;
+          }
         } catch (error) {
           if (!signal.aborted) sourceError.value = message(error);
         }
@@ -425,13 +445,6 @@ async function refreshLive() {
   const current = api.value;
   const page = scene.value;
   if (!current || !page || editing.value || lifetime.signal.aborted) return;
-  if (sourceBlocked.value) {
-    for (const slot of page.bindings)
-      if (slot.deviceId !== null)
-        liveErrors.value[slot.deviceId] =
-          '数据源未就绪，请先在部署端完成启用与配置。';
-    return;
-  }
   const version = liveEpoch;
   const controller = new AbortController();
   liveRequest = controller;
@@ -442,6 +455,15 @@ async function refreshLive() {
       !devices.value.some((item) => item.id === slot.deviceId)
     )
       continue;
+    const sourceIssue = deviceSourceIssue(
+      devices.value.find((item) => item.id === slot.deviceId),
+      sources.value,
+      sourcesLoaded.value,
+    );
+    if (sourceIssue) {
+      liveErrors.value[slot.deviceId] = sourceIssue;
+      continue;
+    }
     const keys = slot.metricKeys.filter((key) =>
       mappings.value[slot.deviceId!]?.some((item) => item.metricKey === key),
     );
@@ -473,22 +495,12 @@ async function refreshLive() {
             ),
           );
           if (controller.signal.aborted || version !== liveEpoch) return;
-          if (
-            results.some(
-              (result) =>
-                result.source !== 'REALDB' ||
-                result.series.some((item) =>
-                  item.points.some(
-                    (point) => point.quality?.toUpperCase() === 'DEMO',
-                  ),
-                ),
-            )
-          )
-            throw new Error(
-              '生产页面拒绝非 REALDB 数据源或模拟质量标记，不使用演示或模拟值。',
-            );
+          const failures = results.flatMap((result) =>
+            sourceResultErrors(result, sources.value),
+          );
+          if (failures.length) throw new Error(failures.join('；'));
           const accepted = results
-            .flatMap((result) => result.series)
+            .flatMap((result) => productionSeries(result, devices.value))
             .filter((item) => item.deviceId === id && keys.has(item.metricKey));
           live.value = [
             ...live.value.filter((item) => item.deviceId !== id),
@@ -544,10 +556,13 @@ async function refreshHistory() {
     !enabled.value ||
     editing.value ||
     !scene.value ||
-    lifetime.signal.aborted ||
-    sourceBlocked.value
+    lifetime.signal.aborted
   )
     return;
+  if (sourceBlocked.value) {
+    historyError.value = selectedSourceIssue.value;
+    return;
+  }
   const current = api.value;
   if (!current) return;
   const version = historyEpoch;
@@ -559,15 +574,12 @@ async function refreshHistory() {
     historyLoading.value = true;
     const result = await current.query('history', query, controller.signal);
     if (controller.signal.aborted || version !== historyEpoch) return;
-    if (
-      result.source !== 'REALDB' ||
-      result.series.some((item) =>
-        item.points.some((point) => point.quality?.toUpperCase() === 'DEMO'),
-      )
-    )
-      throw new Error('生产页面拒绝非 REALDB 历史数据源或模拟质量标记。');
-    lastHistoryQuery.value = query;
-    history.value = result.series.filter(
+    const accepted = productionSeries(result, devices.value);
+    const failures = sourceResultErrors(result, sources.value);
+    historyError.value = failures.join('；');
+    // A partial/failed source must never authorize a seemingly complete export.
+    if (!failures.length) lastHistoryQuery.value = query;
+    history.value = accepted.filter(
       (item) =>
         query.deviceIds.includes(item.deviceId) &&
         query.metricKeys.includes(item.metricKey),
@@ -602,7 +614,7 @@ async function exportHistory() {
 const trend = computed(() =>
   history.value.map((item) => ({
     deviceId: item.deviceId,
-    deviceName: selectedDevice.value?.name ?? String(item.deviceId),
+    deviceName: `${selectedDevice.value?.name ?? item.deviceId} · ${sourceLabel(item.sourceId ?? 'default', sources.value)}`,
     metricKey: item.metricKey,
     unit: item.unit,
     values: item.points.map((point) => ({
@@ -855,7 +867,7 @@ onBeforeUnmount(() => {
             /></label>
           </div>
           <p class="pr-help">
-            以下四个位置只是功能布局模板，不是现场工程设计。可全部保持未绑定后保存；绑定时只能选择设备实际存在的测点映射，单位由读取结果提供。
+            以下四个位置只是功能布局模板，不是现场工程设计。可全部保持未绑定后保存；绑定时只能选择设备实际存在的测点映射，单位由读取结果提供。设备所属数据源不可在此改写；切换设备会清除旧映射选择，同名测点不会自动继承。
           </p>
           <div class="pr-bindings">
             <article
@@ -895,7 +907,8 @@ onBeforeUnmount(() => {
                     :key="item.id"
                     :value="item.id"
                   >
-                    {{ item.name }} · {{ item.code }}
+                    {{ item.name }} · {{ item.code }} ·
+                    {{ deviceSourceLabel(item, sources) }}
                   </option>
                 </select></label
               >
@@ -1072,6 +1085,9 @@ onBeforeUnmount(() => {
             class="og-device-panel"
             data-testid="production-live"
             :data-device-id="binding?.deviceId ?? ''"
+            :data-source-id="
+              selectedDevice ? deviceSourceId(selectedDevice) : ''
+            "
           >
             <div class="og-panel-heading">
               <h2>绑定设备测点</h2>
@@ -1092,14 +1108,26 @@ onBeforeUnmount(() => {
                     devices.find((item) => item.id === slot.deviceId)?.name ??
                     template.slots.find((item) => item.id === slot.slotId)
                       ?.name
-                  }}{{ slot.deviceId === null ? ' · 未绑定' : '' }}
+                  }}{{
+                    slot.deviceId === null
+                      ? ' · 未绑定'
+                      : ` · ${deviceSourceLabel(
+                          devices.find((item) => item.id === slot.deviceId),
+                          sources,
+                        )}`
+                  }}
                 </option>
               </select></label
             >
             <div class="og-device-identity">
               <span>{{ selectedDevice?.code ?? '未绑定可用设备' }}</span
               ><strong>{{ selectedDevice?.name ?? '暂无真实设备' }}</strong
-              ><small>{{
+              ><small
+                v-if="selectedDevice"
+                data-testid="production-device-source"
+                >数据源 {{ deviceSourceLabel(selectedDevice, sources) }}</small
+              >
+              <small>{{
                 binding?.deviceId === null
                   ? '请编辑绑定后读取'
                   : `设备 ID ${binding?.deviceId} · 原始质量独立显示`
@@ -1185,6 +1213,14 @@ onBeforeUnmount(() => {
               <h2>真实历史采样 <small>RAW · 缺测断线 · 本地时间</small></h2>
               <span>不将缺测视为 0</span>
             </div>
+            <p
+              v-if="selectedDevice"
+              class="pr-help"
+              data-testid="production-history-source"
+            >
+              查询来源：{{ deviceSourceLabel(selectedDevice, sources) }} ·
+              不跨数据源匹配同名测点
+            </p>
             <div class="pr-history-controls">
               <label
                 >测点<select
@@ -1280,6 +1316,11 @@ onBeforeUnmount(() => {
               <h2>最近采样明细</h2>
               <span>{{ history[0]?.unit ?? '单位以返回值为准' }}</span>
             </div>
+            <p v-if="history[0]" class="pr-help">
+              样本来源：{{
+                sourceLabel(history[0].sourceId ?? 'default', sources)
+              }}
+            </p>
             <table>
               <thead>
                 <tr>

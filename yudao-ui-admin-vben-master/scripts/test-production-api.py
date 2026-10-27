@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Authenticated real packaged API/database/adapter checks with explicit upstream fixture."""
+import csv
+import io
 import json
 import os
 import time
@@ -15,6 +17,7 @@ DIRECTORY = Path(os.environ.get('PRODUCTION_TEST_ARTIFACT_DIR', 'test-results/pr
 DIRECTORY.mkdir(parents=True, exist_ok=True)
 BASE = 'http://127.0.0.1:48083/admin-api/iot'
 CHECKS = []
+SOURCES = {'source-a': 48084, 'source-b': 48085}
 
 
 def http(url, method='GET', data=None, headers=None):
@@ -38,9 +41,51 @@ def api(path, method='GET', data=None, token='ci-admin-tenant-7001', tenant=7001
     return result.get('data')
 
 
-def control(mode='normal', delay=0):
-    status, result = http('http://127.0.0.1:48084/__fixture/control', 'POST', {'mode': mode, 'delayMs': delay})
+def control(mode='normal', delay=0, source='source-a', history_delay=0):
+    status, result = http(f'http://127.0.0.1:{SOURCES[source]}/__fixture/control', 'POST',
+                          {'mode': mode, 'delayMs': delay, 'historyDelayMs': history_delay})
     assert status == 200 and result.get('ok')
+
+
+def state(source):
+    return http(f'http://127.0.0.1:{SOURCES[source]}/__fixture/state')[1]
+
+
+def vendor_reads(source, path=None):
+    return [entry for entry in state(source)['requests']
+            if entry['path'].startswith('/api/') and (path is None or entry['path'] == path)]
+
+
+def deny(path, method='POST', data=None, token='ci-admin-tenant-7001', tenant=7001):
+    status, result = http(BASE + path, method, data,
+                          {'tenant-id': str(tenant), 'Authorization': 'Bearer ' + token})
+    assert result.get('code') not in (None, 0), (path, status, result)
+    assert result.get('data') is None, (path, result)
+    return result
+
+
+def wait_for(test, description, seconds=35):
+    deadline = time.monotonic() + seconds
+    while True:
+        value = test()
+        if value:
+            return value
+        assert time.monotonic() < deadline, description
+        time.sleep(0.05)
+
+
+def export_done(job):
+    latest = api(f"/exports/{job['id']}")
+    return latest if latest['status'] in ('SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED') else None
+
+
+def export_csv(job):
+    request = Request(BASE + f"/exports/{job['id']}/file",
+                      headers={'tenant-id': '7001', 'Authorization': 'Bearer ci-admin-tenant-7001'})
+    with urlopen(request, timeout=15) as response:
+        assert response.status == 200 and 'text/csv' in response.headers['Content-Type']
+        assert response.headers['Cache-Control'] == 'no-store'
+        return response.read().decode('utf-8-sig')
 
 
 def check(name):
@@ -80,25 +125,37 @@ try:
     assert api('/devices') == [], 'A newly provisioned test database must be empty'
     assert api('/process-pages') == []
     sources = api('/sources')
-    assert len(sources) == 1 and sources[0]['status'] == 'CONFIGURED'
-    assert sources[0]['enabled'] and sources[0]['configured'] and sources[0]['type'] == 'REALDB'
-    for forbidden in ('token', 'password', 'baseUrl', 'username'):
-        assert forbidden not in sources[0], 'Source metadata must not expose credentials/URL'
+    by_source = {source['id']: source for source in sources}
+    assert set(by_source) == {'source-a', 'source-b', 'source-disabled'}, by_source
+    for source_id in ('source-a', 'source-b'):
+        source = by_source[source_id]
+        assert source['status'] == 'CONFIGURED' and source['enabled'] and source['configured']
+        assert source['type'] == 'REALDB'
+    assert by_source['source-disabled']['status'] == 'DISABLED'
+    for source in sources:
+        for forbidden in ('token', 'password', 'baseUrl', 'username', 'allowedTenants'):
+            assert forbidden not in source, 'Source metadata must not expose credentials/URL/allowlist'
+    assert [source['id'] for source in api('/sources', token='ci-admin-tenant-7002', tenant=7002)] == ['source-b']
     check('empty database has no generated business data; source configuration metadata only')
 
     devices = []
     for i in range(1, 5):
-        device = api('/devices', 'POST', {'name': f'自动化夹具设备{i}（非现场）', 'code': f'contract_fixture_{i}'})
+        device = api('/devices', 'POST', {'name': f'自动化夹具设备{i}（非现场）', 'code': f'contract_fixture_{i}', 'sourceId': 'source-a'})
         devices.append(device)
         api(f"/devices/{device['id']}/mappings", 'PUT', [
             {'metricKey': metric, 'name': label, 'pointName': f'fixture.device.{i}.{metric}', 'unit': unit}
             for metric, label, unit in [('pressure', '压力', 'MPa'), ('temperature', '温度', '°C')]
         ])
-    (DIRECTORY / 'seed.json').write_text(json.dumps({'devices': devices}, ensure_ascii=False, indent=2))
+    peer = api('/devices', 'POST', {'name': devices[0]['name'], 'code': 'contract_fixture_b', 'sourceId': 'source-b'})
+    peer_mappings = api(f"/devices/{peer['id']}/mappings", 'PUT', api(f"/devices/{devices[0]['id']}/mappings"))
+    unavailable = api('/devices', 'POST', {'name': '禁用源夹具（非现场）', 'code': 'contract_fixture_disabled', 'sourceId': 'source-disabled'})
+    api(f"/devices/{unavailable['id']}/mappings", 'PUT', peer_mappings)
+    (DIRECTORY / 'seed.json').write_text(json.dumps({'devices': devices, 'peer': peer, 'unavailable': unavailable, 'sources': sources}, ensure_ascii=False, indent=2))
     device_id = devices[0]['id']
     query = {'deviceIds': [device_id], 'metricKeys': ['pressure'], 'aggregation': 'RAW'}
     real = api('/query/realtime', 'POST', query)
     assert real['source'] == 'REALDB' and real['series'][0]['points'][0]['value'] == 10.25
+    assert real['series'][0]['sourceId'] == 'source-a' and not real['partial'] and real['errors'] == []
     assert real['series'][0]['points'][0]['quality'] == 'GOOD'
     assert real['series'][0]['points'][0]['timeSource'] == 'DEVICE'
     end = datetime.now(timezone.utc)
@@ -162,7 +219,8 @@ try:
         else:
             assert point['timeSource'] == 'RECEIVED', 'Reception time must not masquerade as device sampling time'
     control('malformed')
-    api('/query/realtime', 'POST', query, expected=1070000003)
+    malformed = deny('/query/realtime', data=query)
+    assert malformed['code'] == 1070000002 and 'source-a=SOURCE_QUERY_FAILED' in malformed['msg']
     control('failure')
     status, failed = http(BASE+'/query/realtime', 'POST', query,
                           {'tenant-id': '7001', 'Authorization': 'Bearer ci-admin-tenant-7001'})
@@ -170,10 +228,147 @@ try:
     control()
     assert api('/query/realtime', 'POST', query)['series'][0]['points'][0]['value'] == 10.25
     check('missing/stale timestamps, malformed upstream failure, outage and recovery without fallback')
+
+    # A persisted device can never route by request-supplied source or point names.
+    before = {source: len(vendor_reads(source)) for source in SOURCES}
+    for invalid in ({'name': 'omitted source', 'code': 'missing_source'},
+                    {'name': 'unknown source', 'code': 'unknown_source', 'sourceId': 'no-such-source'}):
+        deny('/devices', data=invalid)
+    deny('/devices', data={'name': 'tenant forbidden source', 'code': 'denied_source', 'sourceId': 'source-a'},
+         token='ci-admin-tenant-7002', tenant=7002)
+    allowed = api('/devices', 'POST', {'name': '租户隔离专用（非现场）', 'code': 'tenant_two_b', 'sourceId': 'source-b'},
+                  token='ci-admin-tenant-7002', tenant=7002)
+    assert allowed['sourceId'] == 'source-b'
+    deny(f"/devices/{device_id}", method='PUT', data={**devices[0], 'sourceId': 'source-b'})
+    persisted = {device['id']: device for device in api('/devices')}
+    assert persisted[device_id]['sourceId'] == 'source-a' and persisted[peer['id']]['sourceId'] == 'source-b'
+    assert devices[0]['name'] == peer['name'] and devices[0]['id'] != peer['id']
+    assert before == {source: len(vendor_reads(source)) for source in SOURCES}
+    injected = api('/query/realtime', 'POST', {**query, 'sourceId': 'source-b', 'pointName': 'fixture.device.4.pressure'})
+    assert injected['series'][0]['sourceId'] == 'source-a' and injected['series'][0]['points'][0]['value'] == 10.25
+    check('explicit tenant source allowances, immutable persisted bindings and no implicit first-source fallback')
+
+    cross_query = {**query, 'deviceIds': [device_id, peer['id']]}
+    cross_history = {**history_query, 'deviceIds': [device_id, peer['id']]}
+    for endpoint, request in (('/query/realtime', cross_query), ('/query/history', cross_history)):
+        result = api(endpoint, 'POST', request)
+        assert not result['partial'] and result['errors'] == []
+        series = {entry['sourceId']: entry for entry in result['series']}
+        assert set(series) == {'source-a', 'source-b'}
+        assert series['source-a']['deviceId'] == device_id and series['source-b']['deviceId'] == peer['id']
+        assert series['source-a']['points'][0]['value'] == 10.25
+        assert series['source-b']['points'][0]['value'] == 1010.25
+    # Both peers saw the identical raw point, each through its own valid token.
+    for source in SOURCES:
+        assert any(entry.get('names') == ['fixture.device.1.pressure'] for entry in vendor_reads(source))
+        assert all(entry.get('authenticated') for entry in vendor_reads(source))
+    check('same-named devices and identical vendor point strings retain independent source/value/history identity')
+
+    peer_query = {**query, 'deviceIds': [peer['id']]}
+    for mode, delay in (('failure', 0), ('unauthorized', 0), ('normal', 5000)):
+        control(mode, delay, source='source-b')
+        before_a = len(vendor_reads('source-a'))
+        deny('/query/realtime', data=peer_query)
+        assert len(vendor_reads('source-a')) == before_a, 'A failed B-only request must never route to source A'
+        start = time.monotonic()
+        for endpoint, request in (('/query/realtime', cross_query), ('/query/history', cross_history)):
+            result = api(endpoint, 'POST', request)
+            assert result['partial'] is True and len(result['errors']) == 1
+            assert result['errors'][0]['sourceId'] == 'source-b'
+            assert isinstance(result['errors'][0]['code'], str) and result['errors'][0]['message']
+            assert len(result['series']) == 1 and result['series'][0]['sourceId'] == 'source-a'
+            assert result['series'][0]['points'][0]['value'] == 10.25
+            serialized = json.dumps(result)
+            assert 'token=' not in serialized and '127.0.0.1' not in serialized
+        assert time.monotonic() - start < 14, 'Failed source must have bounded wait, not obscure healthy source'
+        control(source='source-b')
+        assert api('/query/realtime', 'POST', peer_query)['series'][0]['points'][0]['value'] == 1010.25
+    check('per-source outage, rejected authentication and timeout preserve healthy results without cross-source fallback')
+
+    unavailable_query = {**query, 'deviceIds': [unavailable['id']]}
+    before = {source: len(vendor_reads(source)) for source in SOURCES}
+    deny('/query/realtime', data=unavailable_query)
+    assert before == {source: len(vendor_reads(source)) for source in SOURCES}
+    partial = api('/query/realtime', 'POST', {**query, 'deviceIds': [device_id, unavailable['id']]})
+    assert partial['partial'] and partial['errors'][0]['sourceId'] == 'source-disabled'
+    assert partial['series'][0]['sourceId'] == 'source-a' and partial['series'][0]['points'][0]['value'] == 10.25
+    check('disabled source is explicit unavailable metadata/query failure, never a fallback or healthy-source loss')
+
+    # Hold the single real worker in an upstream history request; then observe a
+    # genuinely QUEUED job before editing its mapping via the authenticated API.
+    control(history_delay=3000)
+    before_history = len(vendor_reads('source-a', '/api/hisdata'))
+    blocker = api('/exports', 'POST', history_query)
+    wait_for(lambda: len(vendor_reads('source-a', '/api/hisdata')) > before_history
+             and api(f"/exports/{blocker['id']}")['status'] == 'RUNNING', 'blocker worker reaches real upstream')
+    queued = api('/exports', 'POST', cross_history)
+    assert queued['status'] == 'QUEUED' and set(queued['sourceIds']) == {'source-a', 'source-b'}
+    changed_mappings = [{**mapping, 'pointName': 'fixture.device.4.pressure', 'unit': 'CHANGED'}
+                        if mapping['metricKey'] == 'pressure' else mapping for mapping in peer_mappings]
+    try:
+        api(f"/devices/{peer['id']}/mappings", 'PUT', changed_mappings)
+        assert api(f"/exports/{queued['id']}")['status'] == 'QUEUED', 'Mapping must change while target job is actually queued'
+        control()
+        done = wait_for(lambda: export_done(queued), 'snapshot export completes')
+        assert done['status'] == 'SUCCEEDED', done
+        rows = list(csv.DictReader(io.StringIO(export_csv(done))))
+        assert set(rows[0]) == {'sourceId', 'deviceId', 'metricKey', 'unit', 'time', 'value', 'quality'}
+        for source, expected_device, value in (('source-a', device_id, '10.25'), ('source-b', peer['id'], '1010.25')):
+            group = [row for row in rows if row['sourceId'] == source]
+            assert len(group) == 6 and {row['deviceId'] for row in group} == {str(expected_device)}
+            assert group[0]['value'] == value and {row['unit'] for row in group} == {'MPa'}
+        assert 'CHANGED' not in export_csv(done) and '1040.25' not in export_csv(done)
+        (DIRECTORY / 'cross-source-snapshot-history.csv').write_text(export_csv(done))
+        # Current direct query changes, proving export did not merely reread current mappings.
+        current = api('/query/realtime', 'POST', peer_query)['series'][0]
+        assert current['points'][0]['value'] == 1040.25 and current['unit'] == 'CHANGED'
+    finally:
+        api(f"/devices/{peer['id']}/mappings", 'PUT', peer_mappings)
+        control()
+    assert wait_for(lambda: export_done(blocker), 'blocker completes')['status'] == 'SUCCEEDED'
+    check('queued cross-source export persists original mapping/source/unit snapshot and unambiguous CSV identity')
+
+    control('failure', source='source-b')
+    failed_export = api('/exports', 'POST', cross_history)
+    failed_export = wait_for(lambda: export_done(failed_export), 'partial-source export fails closed')
+    assert failed_export['status'] == 'FAILED' and failed_export['error']
+    deny(f"/exports/{failed_export['id']}/file", method='GET')
+    control(source='source-b')
+    check('partial upstream failure never produces a silently incomplete successful export or downloadable CSV')
+
+    control(history_delay=3000)
+    blocker = api('/exports', 'POST', history_query)
+    wait_for(lambda: api(f"/exports/{blocker['id']}")['status'] == 'RUNNING', 'cancellation blocker runs')
+    cancelled = api('/exports', 'POST', cross_history)
+    assert cancelled['status'] == 'QUEUED'
+    cancelled = api(f"/exports/{cancelled['id']}/cancel", 'POST')
+    assert cancelled['status'] == 'CANCELLED'
+    control()
+    wait_for(lambda: export_done(blocker), 'cancellation blocker completes')
+    time.sleep(2.5)  # Beyond worker poll interval: cancellation must remain terminal.
+    assert api(f"/exports/{cancelled['id']}")['status'] == 'CANCELLED'
+    deny(f"/exports/{cancelled['id']}/file", method='GET')
+    api(f"/exports/{queued['id']}", token='ci-admin-tenant-7002', tenant=7002, expected=1070000404)
+    check('queued export cancellation stays terminal and cross-tenant job/file identity remains protected')
+
+    audits = {source: state(source) for source in SOURCES}
+    for source, audit in audits.items():
+        vendor = [entry for entry in audit['requests'] if entry['path'].startswith('/api/')]
+        assert vendor and all(entry['method'] == 'GET' and entry['authenticated'] for entry in vendor)
+        assert all(entry['sourceId'] == source for entry in vendor)
+    check('independent peer audits contain only their own authenticated read traffic and no vendor mutations')
+    (DIRECTORY / 'multi-source-api-audit.json').write_text(json.dumps(audits, ensure_ascii=False, indent=2) + '\n')
+    assert len(CHECKS) >= 15, 'Existing checks must never be reduced when adding multi-source coverage'
+
 finally:
     import sys
     failure = repr(sys.exc_info()[1]) if sys.exc_info()[1] else None
+    for source in SOURCES:
+        try:
+            control(source=source)
+        except Exception:
+            pass
     output = {'passed': failure is None, 'checks': CHECKS, 'failure': failure,
               'commit': os.environ.get('GITHUB_SHA'), 'evidenceType': 'AUTOMATED_CONTRACT_FIXTURE',
-              'note': 'Actual packaged IoT/auth/tenant/permissions/PostgreSQL/RealDbClient; system and vendor peers are loopback test fixtures. Not actual Zijinqiao/site verification.'}
+              'note': 'Actual packaged IoT/auth/tenant/permissions/PostgreSQL/RealDbClient with independent named-source fixtures and tokens; system and vendor peers are loopback test fixtures. Not actual Zijinqiao/site verification.'}
     (DIRECTORY/'production-api-verification.json').write_text(json.dumps(output, ensure_ascii=False, indent=2)+'\n')

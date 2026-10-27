@@ -6,13 +6,17 @@ import cn.iocoder.yudao.framework.realdb.core.dto.RealDbHistoryQueryDTO;
 import cn.iocoder.yudao.module.iot.model.IotModels.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.Duration;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -22,19 +26,28 @@ class IotQueryServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private IotRepository repository;
     private RealDbClient client;
-    private ObjectProvider<RealDbClient> provider;
+    private IotSourceRegistry registry;
     private IotQueryService service;
     private final OffsetDateTime start = OffsetDateTime.parse("2026-10-26T10:00:00+08:00");
 
     @BeforeEach
-    @SuppressWarnings("unchecked")
     void setup() {
         repository = mock(IotRepository.class);
         client = mock(RealDbClient.class);
-        provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(client);
+        when(repository.device(9L, 1L)).thenReturn(new Device(1L,"Pump","P1","default"));
+        when(repository.device(10L, 1L)).thenThrow(new ServiceException(1_070_000_404,"记录不存在或无权访问"));
         when(repository.mappings(9L, 1L)).thenReturn(List.of(new Mapping("temperature", "温度", "Plant.A.PV", "°C")));
-        service = new IotQueryService(repository, provider, "Asia/Shanghai");
+        configureSource(client, "Asia/Shanghai");
+    }
+
+    @AfterEach
+    void closeRegistry() { if (registry != null) registry.close(); }
+
+    private void configureSource(RealDbClient configured, String zone) {
+        if (registry != null) registry.close();
+        registry = new IotSourceRegistry(Map.of("default", new IotSourceRegistry.Entry("default", "Legacy",
+                configured != null, ZoneId.of(zone), "fixture-v1", configured, Set.of(9L), false, Duration.ofSeconds(2))));
+        service = new IotQueryService(repository, registry);
     }
 
     private Query query(String aggregation) {
@@ -102,9 +115,9 @@ class IotQueryServiceTest {
 
     @Test
     void disabledRealDbNeverFallsBackToMockData() {
-        when(provider.getIfAvailable()).thenReturn(null);
+        configureSource(null, "Asia/Shanghai");
         assertThatThrownBy(() -> service.realtime(9, query("RAW"))).isInstanceOf(ServiceException.class)
-                .hasMessageContaining("不会回退演示数据");
+                .hasMessageContaining("default").hasMessageContaining("SOURCE_UNAVAILABLE");
     }
 
     @Test
@@ -196,9 +209,9 @@ class IotQueryServiceTest {
 
     @Test
     void rejectsDstAmbiguityBeforeReadingVendor() {
-        IotQueryService dst = new IotQueryService(repository, provider, "America/New_York");
+        configureSource(client, "America/New_York");
         OffsetDateTime ambiguous = OffsetDateTime.parse("2026-11-01T01:15:00-04:00");
-        assertThatThrownBy(() -> dst.history(9, new Query(List.of(1L), List.of("temperature"), ambiguous,
+        assertThatThrownBy(() -> service.history(9, new Query(List.of(1L), List.of("temperature"), ambiguous,
                 ambiguous.plusMinutes(1), 1000L, "RAW"))).isInstanceOf(ServiceException.class);
         verifyNoInteractions(client);
     }

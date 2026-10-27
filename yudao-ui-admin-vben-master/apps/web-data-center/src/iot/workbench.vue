@@ -8,6 +8,7 @@ import type {
   IotSeries,
   IotExport,
   IotAggregation,
+  IotSource,
 } from '@vben/micro-apps';
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import { normalizeIotError } from '@vben/micro-apps';
@@ -23,6 +24,15 @@ import {
   widgetTypes,
 } from './model';
 import WidgetView from './WidgetView.vue';
+import SourceStatus from './SourceStatus.vue';
+import {
+  deviceSourceLabel,
+  deviceSourceIssue,
+  sourceLabel,
+  sourceStatusLabels,
+  productionSeries,
+  sourceResultErrors,
+} from './source-model';
 const state = inject(dataCenterKey)!;
 const route = useRoute();
 const router = useRouter();
@@ -31,6 +41,28 @@ const devices = ref<IotDevice[]>([]),
   dashboards = ref<IotDashboard[]>([]),
   templates = ref<IotDashboard[]>([]),
   jobs = ref<IotExport[]>([]);
+const sources = ref<IotSource[]>([]);
+const sourcesLoaded = ref(false);
+const sourceError = ref('');
+const newSourceId = ref('');
+const historyErrors = ref<string[]>([]);
+const production = computed(
+  () => state.props.context?.dataSource === 'platform',
+);
+const currentSourceIssue = computed(() =>
+  production.value
+    ? deviceSourceIssue(
+        devices.value.find((d) => d.id === currentDevice.value),
+        sources.value,
+        sourcesLoaded.value,
+      )
+    : '',
+);
+function deviceLabel(d: IotDevice) {
+  return production.value
+    ? `${d.name} · ${d.code} · ${deviceSourceLabel(d, sources.value)}`
+    : `${d.name} · ${d.code}`;
+}
 const currentDevice = ref(0),
   selectedDashboard = ref(0),
   board = ref<IotDashboard>(),
@@ -68,7 +100,9 @@ const currentMappings = computed(
 );
 const visibleDevices = computed(() =>
   devices.value.filter((d) =>
-    `${d.name} ${d.code}`.toLowerCase().includes(search.value.toLowerCase()),
+    `${d.name} ${d.code} ${production.value ? deviceSourceLabel(d, sources.value) : ''}`
+      .toLowerCase()
+      .includes(search.value.toLowerCase()),
   ),
 );
 const metrics = computed(() =>
@@ -114,6 +148,15 @@ async function initialize() {
   lifetime = new AbortController();
   const signal = lifetime.signal;
   devices.value = [];
+  sources.value = [];
+  sourcesLoaded.value = false;
+  sourceError.value = '';
+  newSourceId.value = '';
+  newName.value = '';
+  newCode.value = '';
+  mappingDraft.value = [];
+  widgetErrors.value = {};
+  historyErrors.value = [];
   mappings.value = {};
   dashboards.value = [];
   templates.value = [];
@@ -144,6 +187,20 @@ async function initialize() {
       api.devices(signal),
       api.dashboards(signal),
       api.templates(signal),
+      (async () => {
+        if (!production.value) return;
+        try {
+          if (!api.sources)
+            throw new Error('当前宿主未提供数据源目录能力；不能创建设备绑定');
+          const list = await api.sources(signal);
+          if (!signal.aborted) {
+            sources.value = list;
+            sourcesLoaded.value = true;
+          }
+        } catch (cause) {
+          if (!signal.aborted) sourceError.value = message(cause);
+        }
+      })(),
     ]);
     if (signal.aborted) return;
     const mapEntries = await Promise.all(
@@ -234,8 +291,17 @@ async function refresh() {
               signal,
             );
             if (!signal.aborted) {
-              series.value[widget.id] = result.series;
-              widgetErrors.value[widget.id] = '';
+              series.value[widget.id] = production.value
+                ? productionSeries(result, devices.value).filter(
+                    (item) =>
+                      ids.includes(item.deviceId) &&
+                      item.metricKey === widget.binding.metricKey,
+                  )
+                : result.series;
+              widgetErrors.value[widget.id] = sourceResultErrors(
+                result,
+                sources.value,
+              ).join('；');
             }
           } catch (cause) {
             if (!signal.aborted) {
@@ -258,7 +324,7 @@ function displaySeries(items: IotSeries[] = []) {
   return items.map((s) => ({
     deviceId: s.deviceId,
     metricKey: s.metricKey,
-    deviceName: `${devices.value.find((d) => d.id === s.deviceId)?.name ?? s.deviceId} · ${s.metricKey}`,
+    deviceName: `${devices.value.find((d) => d.id === s.deviceId)?.name ?? s.deviceId} · ${s.metricKey}${production.value ? ` · ${sourceLabel(s.sourceId ?? 'default', sources.value)}` : ''}`,
     unit: s.unit,
     values: s.points.map((p) => ({
       timestamp: p.time,
@@ -423,6 +489,9 @@ function saveBinding() {
   if (index < 0) board.value.widgets.push(clone(w));
   else board.value.widgets[index] = clone(w);
   settleLayout(board.value.widgets, w.id);
+  // A new binding must not display the previous source beneath its new label.
+  series.value[w.id] = [];
+  widgetErrors.value[w.id] = '';
   draft.value = undefined;
   editing.value = true;
   dirty.value = true;
@@ -534,10 +603,23 @@ async function runHistory() {
   session.addEventListener('abort', cancel, { once: true });
   historyLoading.value = true;
   historySeries.value = [];
+  historyErrors.value = [];
   error.value = '';
   try {
-    const result = await bridge.value!.query('history', historyQuery(), signal);
-    if (!signal.aborted) historySeries.value = result.series;
+    const query = historyQuery();
+    const result = await bridge.value!.query('history', query, signal);
+    if (!signal.aborted) {
+      historySeries.value = (
+        production.value
+          ? productionSeries(result, devices.value)
+          : result.series
+      ).filter(
+        (item) =>
+          query.deviceIds.includes(item.deviceId) &&
+          query.metricKeys.includes(item.metricKey),
+      );
+      historyErrors.value = sourceResultErrors(result, sources.value);
+    }
   } catch (cause) {
     if (!signal.aborted) error.value = message(cause);
   } finally {
@@ -579,13 +661,30 @@ async function download(job: IotExport) {
   });
 }
 async function createDevice() {
+  if (busy.value || loading.value) return;
+  if (
+    production.value &&
+    (!sourcesLoaded.value ||
+      !sources.value.some(
+        (source) =>
+          source.id === newSourceId.value && source.status === 'CONFIGURED',
+      ))
+  ) {
+    error.value =
+      '请选择当前租户可见且已配置的数据源；不会自动选择默认源或其他源';
+    return;
+  }
   if (!newName.value.trim() || !newCode.value.trim()) {
     error.value = '请输入设备名称和编码';
     return;
   }
   await action(async (signal) => {
     const d = await bridge.value!.createDevice(
-      { name: newName.value, code: newCode.value },
+      {
+        name: newName.value,
+        code: newCode.value,
+        ...(production.value ? { sourceId: newSourceId.value } : {}),
+      },
       signal,
     );
     if (signal.aborted) return;
@@ -594,6 +693,7 @@ async function createDevice() {
     currentDevice.value = d.id;
     newName.value = '';
     newCode.value = '';
+    newSourceId.value = '';
     notice.value = '设备已创建，请配置测点映射';
   });
 }
@@ -614,14 +714,39 @@ async function saveMappings() {
     notice.value = '测点映射已保存';
   });
 }
-watch([() => state.props.context?.sessionKey, () => state.props.bridge], initialize, {
-  immediate: true,
-});
+watch(
+  [
+    () => state.props.context?.sessionKey,
+    () => state.props.context?.tenantId,
+    () => state.props.context?.dataSource,
+    () => state.props.bridge,
+  ],
+  initialize,
+  {
+    immediate: true,
+  },
+);
 watch(currentDevice, () => {
   mappingDraft.value = clone(currentMappings.value);
   series.value = {};
   void refresh();
 });
+watch(
+  [
+    historyDevices,
+    historyMetric,
+    historyStart,
+    historyEnd,
+    historyInterval,
+    historyAggregation,
+  ],
+  () => {
+    cancelHistory();
+    historySeries.value = [];
+    historyErrors.value = [];
+  },
+  { deep: true },
+);
 watch(
   () => route.path,
   () => {
@@ -662,7 +787,7 @@ onBeforeUnmount(clearRequests);
             >当前设备
             <select v-model="currentDevice" data-testid="iot-device-select">
               <option v-for="d in devices" :value="d.id" :key="d.id">
-                {{ d.name }} · {{ d.code }}
+                {{ deviceLabel(d) }}
               </option>
             </select></label
           >
@@ -778,6 +903,22 @@ onBeforeUnmount(clearRequests);
               ><button v-if="editing" @click="draft = clone(w)">配置</button
               ><button v-if="editing" @click="deleteWidget(w.id)">移除</button>
             </div>
+            <div
+              v-if="production"
+              class="iot-muted"
+              data-testid="iot-widget-sources"
+            >
+              {{
+                bindingDevices(w, currentDevice)
+                  .map((id) =>
+                    deviceSourceLabel(
+                      devices.find((d) => d.id === id),
+                      sources,
+                    ),
+                  )
+                  .join('、')
+              }}
+            </div>
             <div v-if="widgetErrors[w.id]" class="iot-warning">
               {{ widgetErrors[w.id] }}
             </div>
@@ -812,24 +953,73 @@ onBeforeUnmount(clearRequests);
         <aside class="iot-panel">
           <input
             v-model="search"
-            placeholder="搜索设备名称 / 编码"
+            placeholder="搜索设备名称 / 编码 / 数据源"
             aria-label="搜索设备"
           /><button
             v-for="d in visibleDevices"
             :key="d.id"
             class="iot-device-row"
             :class="{ selected: currentDevice === d.id }"
+            :data-device-id="d.id"
+            :disabled="busy"
             @click="currentDevice = d.id"
           >
             <strong>{{ d.name }}</strong
             ><small>{{ d.code }}</small>
+            <small v-if="production">{{ deviceSourceLabel(d, sources) }}</small>
           </button>
           <hr />
           <label
-            >设备名称<input v-model="newName" aria-label="设备名称" /></label
+            >设备名称<input
+              v-model="newName"
+              :disabled="busy"
+              aria-label="设备名称" /></label
           ><label
-            >设备编码<input v-model="newCode" aria-label="设备编码" /></label
-          ><button :disabled="busy" @click="createDevice">创建设备</button>
+            >平台设备编码（租户内唯一）<input
+              v-model="newCode"
+              :disabled="busy"
+              aria-label="设备编码" /></label
+          ><label v-if="production"
+            >绑定数据源
+            <select
+              v-model="newSourceId"
+              data-testid="iot-new-device-source"
+              aria-label="新设备数据源"
+              :disabled="busy || !sourcesLoaded"
+            >
+              <option value="">请选择数据源（不自动改源）</option>
+              <option
+                v-for="source in sources"
+                :key="source.id"
+                :value="source.id"
+                :disabled="source.status !== 'CONFIGURED'"
+              >
+                {{ source.name }} [{{ source.id }}] ·
+                {{ sourceStatusLabels[source.status] }}
+              </option>
+            </select> </label
+          ><button
+            data-testid="iot-device-create"
+            :disabled="
+              busy ||
+              (production &&
+                (!sourcesLoaded ||
+                  !sources.some(
+                    (source) =>
+                      source.id === newSourceId &&
+                      source.status === 'CONFIGURED',
+                  )))
+            "
+            @click="createDevice"
+          >
+            创建设备
+          </button>
+          <template v-if="production">
+            <SourceStatus :sources="sources" :error="sourceError" />
+            <p class="iot-muted">
+              仅选择部署端已配置并授权给当前租户的数据源。已配置不代表已连通；此处不编辑连接地址或凭据。
+            </p>
+          </template>
         </aside>
         <div class="iot-panel">
           <div class="iot-toolbar">
@@ -856,6 +1046,21 @@ onBeforeUnmount(clearRequests);
               保存映射
             </button>
           </div>
+          <p
+            v-if="production && currentDevice"
+            data-testid="iot-current-source"
+            class="iot-muted"
+          >
+            数据源：{{
+              deviceSourceLabel(
+                devices.find((d) => d.id === currentDevice),
+                sources,
+              )
+            }}。绑定创建后不可修改；换源请新建设备、重新配置映射，再显式修改看板或工艺绑定，不会静默改写历史来源。
+          </p>
+          <p v-if="currentSourceIssue" class="iot-warning" role="alert">
+            {{ currentSourceIssue }}
+          </p>
           <p class="iot-muted">
             统一指标键用于跨设备模板；原始测点名由服务端读取紫金桥。不修改现场设备或测点。
           </p>
@@ -925,7 +1130,7 @@ onBeforeUnmount(clearRequests);
               aria-label="历史设备集合"
             >
               <option v-for="d in devices" :key="d.id" :value="d.id">
-                {{ d.name }}
+                {{ deviceLabel(d) }}
               </option>
             </select></label
           ><label
@@ -988,6 +1193,18 @@ onBeforeUnmount(clearRequests);
           对整个时间窗的采样结果统计为一个值，不是按间隔分桶。CSV
           使用相同口径。缺测不补 0。
         </p>
+        <div
+          v-if="historyErrors.length"
+          data-testid="iot-history-errors"
+          class="iot-warning"
+          role="alert"
+        >
+          <p v-for="item in historyErrors" :key="item">{{ item }}</p>
+          <p>
+            成功数据源结果保留；失败来源无伪造数据。完整 CSV
+            需全部来源成功，否则任务失败。
+          </p>
+        </div>
         <div data-testid="iot-history-results">
           <WidgetView
             :widget="{ type: 'line', title: '历史趋势' }"
@@ -1010,6 +1227,7 @@ onBeforeUnmount(clearRequests);
               <tr>
                 <th>任务编号</th>
                 <th>状态</th>
+                <th v-if="production">快照数据源</th>
                 <th>创建时间</th>
                 <th>过期时间</th>
                 <th>操作</th>
@@ -1026,16 +1244,20 @@ onBeforeUnmount(clearRequests);
                   {{ job.status }}
                   <span class="iot-warning">{{ job.error }}</span>
                 </td>
+                <td v-if="production" data-testid="iot-export-sources">
+                  {{
+                    job.sourceIds?.length
+                      ? job.sourceIds
+                          .map((id) => sourceLabel(id, sources))
+                          .join('、')
+                      : '旧任务未记录来源摘要；以 CSV 为准'
+                  }}
+                </td>
                 <td>{{ job.createdAt }}</td>
                 <td>{{ job.expiresAt }}</td>
                 <td>
                   <button
-                    :disabled="
-                      busy ||
-                      !['COMPLETED', 'SUCCEEDED', 'SUCCESS'].includes(
-                        job.status,
-                      )
-                    "
+                    :disabled="busy || job.status !== 'SUCCEEDED'"
                     @click="download(job)"
                   >
                     下载 CSV</button
@@ -1131,7 +1353,7 @@ onBeforeUnmount(clearRequests);
               data-testid="iot-binding-devices"
             >
               <option v-for="d in devices" :value="d.id" :key="d.id">
-                {{ d.name }}
+                {{ deviceLabel(d) }}
               </option></select
             ><small v-if="draft.binding.mode === 'fixed'"
               >固定模式只使用第一个所选设备。</small
@@ -1235,6 +1457,7 @@ onBeforeUnmount(clearRequests);
           <thead>
             <tr>
               <th>设备</th>
+              <th v-if="production">数据源</th>
               <th>原始测点</th>
               <th>单位</th>
             </tr>
@@ -1242,6 +1465,14 @@ onBeforeUnmount(clearRequests);
           <tbody>
             <tr v-for="id in bindingDevices(draft, currentDevice)" :key="id">
               <td>{{ devices.find((d) => d.id === id)?.name }}</td>
+              <td v-if="production">
+                {{
+                  deviceSourceLabel(
+                    devices.find((d) => d.id === id),
+                    sources,
+                  )
+                }}
+              </td>
               <td>
                 {{
                   mappings[id]?.find(

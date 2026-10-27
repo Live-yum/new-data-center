@@ -675,4 +675,118 @@ describe('production process page lifecycle and read-only bindings', () => {
     expect(container.querySelector('[data-testid="scene-editor"]')).toBeNull();
     expect(get('scene-empty')).toBeTruthy();
   });
+
+  const namedDevices = deviceList.map((device, index) => ({
+    ...device,
+    sourceId: index === 0 ? 'a' : 'b',
+  }));
+  const namedSources = ['a', 'b'].map((id) => ({
+    ...source,
+    id,
+    name: `现场源${id}`,
+  }));
+  function namedResult(query: IotQuery, value = 42): IotResult {
+    const data = result(query, value);
+    data.series.forEach((item) => {
+      item.sourceId = namedDevices.find(
+        (device) => device.id === item.deviceId,
+      )!.sourceId;
+    });
+    return data;
+  }
+  it('blocks only disabled source A while source B in the same scene remains readable', async () => {
+    const api = fixture(undefined, {
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => [
+        { ...namedSources[0]!, status: 'DISABLED' as const, enabled: false },
+        namedSources[1]!,
+      ]),
+      query: vi.fn(async (_mode, query) => namedResult(query, 87)),
+    });
+    await mount(props(api));
+    await settle();
+    expect(get('production-device-source').textContent).toContain(
+      '现场源a [a]',
+    );
+    expect(reading('pressure').dataset.status).toBe('failed');
+    expect(get('production-live').textContent).toContain('未启用');
+    expect(
+      vi
+        .mocked(api.query)
+        .mock.calls.every(([, query]) => query.deviceIds[0] === 7302),
+    ).toBe(true);
+    await select('production-node', 'slot-2');
+    expect(reading('flow').textContent).toContain('87');
+    expect(get('production-history-source').textContent).toContain(
+      '现场源b [b]',
+    );
+    expect(get('production-live').dataset.sourceId).toBe('b');
+  });
+  it('removes failed-source previous values but preserves the healthy source after an outage', async () => {
+    let failed = false;
+    const api = fixture(undefined, {
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => namedSources),
+      query: vi.fn(async (_mode, query) => {
+        if (failed && query.deviceIds[0] === 2701)
+          return {
+            source: 'REALDB',
+            partial: true,
+            series: [],
+            errors: [
+              {
+                sourceId: 'a',
+                code: 'SOURCE_UNAVAILABLE',
+                message: '独立源读取失败',
+              },
+            ],
+          };
+        return namedResult(query, query.deviceIds[0] === 2701 ? 31 : 87);
+      }),
+    });
+    await mount(props(api));
+    await settle();
+    expect(reading('pressure').textContent).toContain('31');
+    failed = true;
+    await click('production-live-refresh');
+    expect(reading('pressure').dataset.status).toBe('failed');
+    expect(reading('pressure').textContent).not.toContain('31');
+    expect(get('production-live').textContent).toContain(
+      '现场源a [a]：独立源读取失败',
+    );
+    await select('production-node', 'slot-2');
+    expect(reading('flow').textContent).toContain('87');
+    expect(get('production-trend').textContent).toContain('现场源b [b]');
+  });
+  it('rejects cross-source or source-less named-source responses and cannot export that history', async () => {
+    const api = fixture(undefined, {
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => namedSources),
+      query: vi.fn(async (_mode, query) => result(query, 999)),
+    });
+    await mount(props(api));
+    await settle();
+    expect(reading('pressure').dataset.status).toBe('failed');
+    expect(reading('pressure').textContent).not.toContain('999');
+    expect(get('production-live').textContent).toContain('拒绝混用同名测点');
+    expect(get<HTMLButtonElement>('production-export').disabled).toBe(true);
+  });
+  it('treats a missing tenant-visible source as unavailable or denied, without substituting another source', async () => {
+    const api = fixture(undefined, {
+      devices: vi.fn(async () => namedDevices),
+      sources: vi.fn(async () => [namedSources[1]!]),
+      query: vi.fn(async (_mode, query) => namedResult(query, 87)),
+    });
+    await mount(props(api));
+    await settle();
+    expect(get('production-live').textContent).toContain('无权访问');
+    expect(get('production-live').textContent).toContain('[a]');
+    expect(
+      vi
+        .mocked(api.query)
+        .mock.calls.some(([, query]) => query.deviceIds.includes(2701)),
+    ).toBe(false);
+    await select('production-node', 'slot-2');
+    expect(reading('flow').textContent).toContain('87');
+  });
 });

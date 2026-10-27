@@ -18,7 +18,7 @@ const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).trim();
 if (process.env.GITHUB_SHA) assert.equal(commit, process.env.GITHUB_SHA);
-const { devices } = JSON.parse(
+const { devices, peer, unavailable } = JSON.parse(
   await readFile(join(directory, 'seed.json'), 'utf8'),
 );
 const scenes = ['separation', 'gas', 'storage', 'utilities', 'offshore'];
@@ -100,11 +100,12 @@ async function api(path, method = 'GET', data) {
   assert.equal(value.code, 0, JSON.stringify({ path, value }));
   return value.data;
 }
-async function control(mode = 'normal', delayMs = 0) {
-  const response = await fetch('http://127.0.0.1:48084/__fixture/control', {
+async function control(mode = 'normal', delayMs = 0, source = 'source-a', historyDelayMs = 0) {
+  const port = source === 'source-b' ? 48085 : 48084;
+  const response = await fetch(`http://127.0.0.1:${port}/__fixture/control`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, delayMs }),
+    body: JSON.stringify({ mode, delayMs, historyDelayMs }),
   });
   assert.equal(response.status, 200);
 }
@@ -123,14 +124,15 @@ async function mounted(scene) {
   assert.equal(await page.locator('.dc-shell').count(), 1);
   assert.equal(await page.getByTestId('production-unavailable').count(), 0);
 }
-async function ready(scene) {
+async function ready(scene, value = 10.25, source = 'source-a') {
   await mounted(scene);
   await page.getByTestId('production-trend').locator('svg').first().waitFor();
   await until(
     async () => (await point().getAttribute('data-status')) === 'fresh',
     'REALDB device-time fresh reading',
   );
-  assert.match(await point().innerText(), /10\.25/);
+  assert.ok((await point().locator('strong').innerText()).includes(String(value)));
+  assert.equal(await page.getByTestId('production-live').getAttribute('data-source-id'), source);
   assert.match(await point().innerText(), /GOOD/);
 }
 async function goto(scene) {
@@ -203,7 +205,7 @@ async function capture(scene, viewport) {
     commit,
     browser: browser.version(),
     evidenceType: 'AUTOMATED_CONTRACT_FIXTURE',
-    apiDataSource: 'REALDB adapter with test-only upstream',
+    apiDataSource: 'Independent named REALDB adapters with test-only upstreams',
     screenshotIncludesFixtureBanner: true,
   });
 }
@@ -658,6 +660,203 @@ try {
     },
   );
 
+  await check(
+    'Explicit source selection creates and persists the intended device binding; equal names remain distinguishable',
+    async () => {
+      await page.getByRole('link', { name: '设备与测点', exact: true }).click();
+      const selector = page.getByTestId('iot-new-device-source');
+      await selector.waitFor();
+      await until(async () => !(await selector.isDisabled()), 'tenant source catalog loaded');
+      assert.equal(await selector.inputValue(), '', 'Never auto-select the first configured source');
+      assert.equal(await page.getByTestId('iot-device-create').isDisabled(), true);
+      assert.equal(await selector.locator('option[value="source-disabled"]').isDisabled(), true);
+      for (const [device, source] of [[devices[0], 'source-a'], [peer, 'source-b']]) {
+        const row = page.locator(`.iot-device-row[data-device-id="${device.id}"]`);
+        assert.ok((await row.innerText()).includes(device.name));
+        assert.ok((await row.innerText()).includes(`[${source}]`));
+      }
+      await page.getByLabel('设备名称', { exact: true }).fill('浏览器独立源设备（非现场）');
+      await page.getByLabel('设备编码', { exact: true }).fill('browser_source_b_fixture');
+      await selector.selectOption('source-b');
+      await page.getByTestId('iot-device-create').click();
+      let created;
+      await until(async () => {
+        created = (await api('/devices')).find((device) => device.code === 'browser_source_b_fixture');
+        return !!created;
+      }, 'browser-created metadata persisted');
+      assert.equal(created.sourceId, 'source-b');
+      await until(async () => (await page.getByTestId('iot-current-source').innerText()).includes('[source-b]'), 'created device identity');
+      await page.reload();
+      await page.locator(`.iot-device-row[data-device-id="${created.id}"]`).click();
+      assert.match(await page.getByTestId('iot-current-source').innerText(), /source-b/);
+      assert.equal(await selector.inputValue(), '');
+      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await ready('separation');
+    },
+  );
+
+  await check(
+    'Same-name cross-source process bindings persist and display different values with source identity',
+    async () => {
+      await page.getByTestId('scene-edit').click();
+      const options = page.getByTestId('slot-2-device');
+      for (const [device, source] of [[devices[0], 'source-a'], [peer, 'source-b']]) {
+        assert.ok((await options.locator(`option[value="${device.id}"]`).innerText()).includes(`[${source}]`));
+      }
+      await options.selectOption(String(peer.id));
+      await page.getByTestId('slot-2-metrics').selectOption(['pressure', 'temperature']);
+      await page.getByTestId('slot-2-primary').selectOption('pressure');
+      await page.getByTestId('slot-3-device').selectOption(String(unavailable.id));
+      await page.getByTestId('slot-3-metrics').selectOption(['pressure']);
+      await page.getByTestId('slot-3-primary').selectOption('pressure');
+      await page.getByTestId('scene-save').click();
+      await page.getByTestId('scene-editor').waitFor({ state: 'detached' });
+      await ready('separation');
+      const saved = (await api('/process-pages')).find((item) => item.template === 'separation');
+      assert.equal(saved.bindings[1].deviceId, peer.id);
+      assert.equal(saved.bindings[2].deviceId, unavailable.id);
+      await page.reload();
+      await ready('separation');
+      await page.getByTestId('production-node').selectOption('slot-2');
+      await ready('separation', 1010.25, 'source-b');
+      assert.match(await page.getByTestId('production-device-source').innerText(), /source-b/);
+      assert.match(await page.getByTestId('production-trend').innerText(), /source-b/);
+      await capture('cross-source', 'desktop');
+    },
+  );
+
+  await check(
+    'A disabled or failed process source never masks a healthy source or substitutes a same-named point',
+    async () => {
+      await page.getByTestId('production-node').selectOption('slot-3');
+      await until(async () => (await point().getAttribute('data-status')) === 'failed', 'disabled source is visibly unavailable');
+      assert.equal(await page.getByTestId('production-live').getAttribute('data-source-id'), 'source-disabled');
+      assert.match(await page.getByTestId('production-live').innerText(), /未启用/);
+      assert.equal((await point().locator('strong').innerText()).trim(), '—');
+      await page.getByTestId('production-node').selectOption('slot-1');
+      await ready('separation');
+      await control('failure', 0, 'source-b');
+      await page.getByTestId('production-node').selectOption('slot-2');
+      await page.getByTestId('production-live').getByRole('button', { name: '立即读取', exact: true }).click();
+      await until(async () => (await point().getAttribute('data-status')) === 'failed', 'source B outage');
+      assert.doesNotMatch(await point().locator('strong').innerText(), /10\.25/);
+      await page.getByTestId('production-node').selectOption('slot-1');
+      await ready('separation');
+      await control('normal', 0, 'source-b');
+      await page.getByTestId('production-node').selectOption('slot-2');
+      await page.getByTestId('production-live').getByRole('button', { name: '立即读取', exact: true }).click();
+      await ready('separation', 1010.25, 'source-b');
+    },
+  );
+
+  await check(
+    'Cross-source history retains both identities and healthy rows during a second-source outage',
+    async () => {
+      await page.getByRole('link', { name: '历史查询', exact: true }).click();
+      const selector = page.getByLabel('历史设备集合', { exact: true });
+      await selector.waitFor();
+      await selector.selectOption([String(devices[0].id), String(peer.id)]);
+      await page.getByLabel('历史指标', { exact: true }).selectOption('pressure');
+      await page.getByTestId('iot-history-run').click();
+      const results = page.getByTestId('iot-history-results');
+      await until(async () => (await results.locator('tbody tr').count()) > 10, 'real cross-source history rows');
+      assert.match(await results.innerText(), /source-a/);
+      assert.match(await results.innerText(), /source-b/);
+      assert.match(await results.innerText(), /1010\.25/);
+      assert.equal(await results.locator('.iot-chart-series').count(), 2);
+      await control('failure', 0, 'source-b');
+      await page.getByTestId('iot-history-run').click();
+      await page.getByTestId('iot-history-errors').waitFor();
+      assert.match(await page.getByTestId('iot-history-errors').innerText(), /source-b/);
+      assert.match(await results.innerText(), /source-a/);
+      assert.doesNotMatch(await results.innerText(), /source-b|1010\.25/);
+      assert.equal(await results.locator('.iot-chart-series').count(), 1);
+      await control('normal', 0, 'source-b');
+      await page.getByTestId('iot-history-run').click();
+      await until(async () => (await results.locator('.iot-chart-series').count()) === 2, 'both independent sources recover');
+      assert.equal(await page.getByTestId('iot-history-errors').count(), 0);
+      await page.getByTestId('contract-fixture-banner').waitFor();
+      const filename = 'production-contract-cross-source-history.png';
+      await page.screenshot({ path: join(directory, filename), fullPage: true, animations: 'disabled' });
+      captures.push({ filename, commit, evidenceType: 'AUTOMATED_CONTRACT_FIXTURE', screenshotIncludesFixtureBanner: true });
+    },
+  );
+
+  await check(
+    'Browser cross-source export shows frozen source summary and downloads source-labelled CSV',
+    async () => {
+      const previous = new Set((await api('/exports')).map((job) => job.id));
+      await page.getByTestId('iot-export').click();
+      let job;
+      await until(async () => {
+        job = (await api('/exports')).find((entry) => !previous.has(entry.id));
+        return !!job;
+      }, 'cross-source browser export persisted');
+      assert.deepEqual([...job.sourceIds].sort(), ['source-a', 'source-b']);
+      await until(async () => {
+        job = await api(`/exports/${job.id}`);
+        assert.notEqual(job.status, 'FAILED', job.error);
+        return job.status === 'SUCCEEDED';
+      }, 'cross-source browser export completed', 30_000);
+      await page.getByRole('link', { name: '下载任务', exact: true }).first().click();
+      const row = page.getByTestId(`iot-export-${job.id}`);
+      await row.waitFor();
+      assert.match(await row.getByTestId('iot-export-sources').innerText(), /source-a/);
+      assert.match(await row.getByTestId('iot-export-sources').innerText(), /source-b/);
+      const downloaded = page.waitForEvent('download');
+      await row.getByRole('button', { name: '下载 CSV', exact: true }).click();
+      const filename = join(directory, 'production-contract-cross-source-history.csv');
+      await (await downloaded).saveAs(filename);
+      const csv = await readFile(filename, 'utf8');
+      assert.match(csv, /^\uFEFF?sourceId,deviceId,metricKey,unit,time,value,quality/);
+      assert.ok(csv.includes(`"source-a","${devices[0].id}"`));
+      assert.ok(csv.includes(`"source-b","${peer.id}"`));
+      assert.match(csv, /"10\.25"/);
+      assert.match(csv, /"1010\.25"/);
+    },
+  );
+
+  await check(
+    'Cross-source history cancellation, tenant replacement and remount discard late values and source selections',
+    async () => {
+      const configure = async () => {
+        await page.getByRole('link', { name: '历史查询', exact: true }).click();
+        await page.getByLabel('历史设备集合', { exact: true }).selectOption([String(devices[0].id), String(peer.id)]);
+        await page.getByLabel('历史指标', { exact: true }).selectOption('pressure');
+      };
+      await configure();
+      await control('normal', 0, 'source-b', 2000);
+      await page.getByTestId('iot-history-run').click();
+      await page.getByTestId('iot-history-cancel').click();
+      await tick(2300);
+      assert.equal(await page.getByTestId('iot-history-results').locator('tbody tr').count(), 0);
+      await page.getByTestId('iot-history-run').click();
+      await page.locator('#tenant-two').click();
+      await until(async () => !(await page.getByLabel('历史设备集合', { exact: true }).innerText()).includes('source-a'), 'old tenant options cleared');
+      await tick(2300);
+      assert.equal(await page.getByTestId('iot-history-results').locator('tbody tr').count(), 0);
+      assert.doesNotMatch(await page.getByLabel('历史设备集合', { exact: true }).innerText(), /source-a|自动化夹具设备/);
+      await control('normal', 0, 'source-b');
+      await page.locator('#tenant-one').click();
+      await until(async () => (await page.getByLabel('历史设备集合', { exact: true }).locator('option').count()) >= devices.length, 'original tenant devices restored');
+      await configure();
+      await control('normal', 0, 'source-b', 2000);
+      await page.getByTestId('iot-history-run').click();
+      await page.locator('#unmount').click();
+      await page.getByTestId('harness-status').filter({ hasText: /^未挂载$/ }).waitFor();
+      await until(async () => (await page.getByTestId('harness-pending').innerText()) === '0', 'multi-source pending requests aborted');
+      await control('normal', 0, 'source-b');
+      await page.locator('#remount').click();
+      await page.getByTestId('harness-status').filter({ hasText: /^已挂载$/ }).waitFor();
+      await page.getByTestId('iot-history-run').waitFor();
+      await tick(2300);
+      assert.equal(await page.getByTestId('iot-history-results').locator('tbody tr').count(), 0);
+      await page.getByRole('link', { name: '生产工艺', exact: true }).click();
+      await ready('separation');
+    },
+  );
+
+  assert.ok(checks.length >= 23, 'Retain all seventeen original production browser checks');
   assert.deepEqual(
     errors,
     [],
@@ -676,19 +875,14 @@ try {
       ),
     'Child uses the bounded bridge, not direct vendor HTTP',
   );
-  const upstream = await (
-    await fetch('http://127.0.0.1:48084/__fixture/state')
-  ).json();
-  const vendor = upstream.requests.filter((request) =>
-    request.path.startsWith('/api/'),
-  );
-  assert.ok(
-    vendor.length > 0 &&
-      vendor.every(
-        (request) => request.method === 'GET' && request.authenticated,
-      ),
-    'Only authenticated vendor reads; no device mutations',
-  );
+  const upstream = {};
+  for (const [source, port] of [['source-a', 48084], ['source-b', 48085]]) {
+    upstream[source] = await (await fetch(`http://127.0.0.1:${port}/__fixture/state`)).json();
+    const vendor = upstream[source].requests.filter((request) => request.path.startsWith('/api/'));
+    assert.ok(vendor.length > 0 && vendor.every((request) =>
+      request.method === 'GET' && request.authenticated && request.sourceId === source),
+    'Both independent peers receive only their own authenticated reads; no device mutations');
+  }
   await writeFile(
     join(directory, 'upstream-contract-audit.json'),
     JSON.stringify(upstream, null, 2) + '\n',
@@ -704,6 +898,7 @@ try {
   throw error;
 } finally {
   await control().catch(() => {});
+  await control('normal', 0, 'source-b').catch(() => {});
   await writeFile(
     join(directory, 'production-browser-verification.json'),
     JSON.stringify(
